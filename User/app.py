@@ -88,10 +88,7 @@ def index():
     """Serves the main page that links to the widget."""
     return render_template('index.html')
 
-@app.route('/widget')
-def chat_widget():
-    """Serves the chat widget HTML file."""
-    return render_template('chat_widget.html')
+# --- REMOVED /widget route ---
 
 # --- Whisper Transcription Endpoint ---
 @app.route('/api/transcribe', methods=['POST'])
