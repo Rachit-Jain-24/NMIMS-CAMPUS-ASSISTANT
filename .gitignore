@@ -109,7 +109,7 @@ env.bak/
 venv.bak/
 
 # Large model files
-/User/models/*/
+/User/models/
 
 
 # Spyder project settings
