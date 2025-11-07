@@ -1,9 +1,14 @@
 Flask
 gunicorn
 langchain
+langchain-core
 langchain-community
 langchain-aws==1.0.0
 faiss-cpu
 boto3
 python-dotenv==1.0.1
 Flask-Cors
+deep_translator
+openai-whisper
+sounddevice
+numpy

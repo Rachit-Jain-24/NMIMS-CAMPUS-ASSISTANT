@@ -1,218 +1,220 @@
-import os
 import boto3
-from botocore.exceptions import ClientError
-import logging
+import os
 import tempfile
+import logging
 import re
-import uuid
 from dotenv import load_dotenv
-
-# LangChain components
-from langchain_core.prompts import PromptTemplate
-from langchain_aws import BedrockEmbeddings, BedrockLLM
+from langchain_aws import BedrockLLM, BedrockEmbeddings
 from langchain_community.vectorstores import FAISS
+# --- THIS IS THE FIX ---
+from langchain_core.prompts import PromptTemplate 
+# ------------------------
 
-# Load environment
+# Setup
 load_dotenv()
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 1. FIX: Use __name__ (double underscores)
 logger = logging.getLogger(__name__)
 
-# Config
-EMBEDDING_MODEL_ID = os.getenv("BEDROCK_EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
-LLM_MODEL_ID = os.getenv("BEDROCK_LLM_MODEL_ID", "mistral.mixtral-8x7b-instruct-v0:1")
+# --- Constants ---
+BEDROCK_EMBEDDING_MODEL_ID = os.getenv("BEDROCK_EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
+BEDROCK_LLM_MODEL_ID = os.getenv("BEDROCK_LLM_MODEL_ID", "mistral.mixtral-8x7b-instruct-v0:1") # Or your preferred LLM
+KB_ROOT_PREFIX = "nmims_rag/"
+ALL_SCHOOL_CONTEXTS = ["SBM", "SOL", "SOC", "STME", "SPTM", "general"]
 
-# AWS config
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_REGION = os.getenv("AWS_DEFAULT_REGION", "ap-south-1")
-BUCKET_NAME = os.getenv("BUCKET_NAME")
-
-FAISS_S3_KEY = "nmims_rag/vector_store.faiss"
-PKL_S3_KEY = "nmims_rag/vector_store.pkl"
-
-LOCAL_INDEX_DIR = tempfile.gettempdir()
-LOCAL_INDEX_NAME = "nmims_rag_index"
-
-# --- Global Clients (Initialized once) ---
-try:
-    if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BUCKET_NAME]):
-        logger.error("Missing AWS config. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BUCKET_NAME in environment/.env")
-        raise ValueError("Missing AWS configuration")
-
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_REGION
-    )
-    bedrock_client = boto3.client(
-        service_name='bedrock-runtime',
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_REGION
-    )
-    bedrock_embeddings = BedrockEmbeddings(
-        model_id=EMBEDDING_MODEL_ID,
-        client=bedrock_client,
-        region_name=AWS_REGION
-    )
-    logger.info("AWS clients and Bedrock embeddings initialized successfully.")
-except Exception as e:
-    logger.critical(f"AWS initialization failed: {e}")
-    s3_client = None
-    bedrock_client = None
-    bedrock_embeddings = None
-
-# --- Main RAG Functions ---
-
-def load_vector_store():
-    """
-    Downloads and loads the FAISS vector store from S3.
-    """
-    if not s3_client or not bedrock_embeddings:
-        logger.error("AWS clients not initialized. Cannot load vector store.")
-        return None
+class RAGBackend:
+    # 2. FIX: Use __init__ (double underscores)
+    def __init__(self, bucket, s3_client, bedrock_client):
+        self.bucket = bucket
+        self.s3_client = s3_client
+        self.bedrock_client = bedrock_client
         
-    try:
-        # Check if files exist in S3
-        try:
-            s3_client.head_object(Bucket=BUCKET_NAME, Key=FAISS_S3_KEY)
-            s3_client.head_object(Bucket=BUCKET_NAME, Key=PKL_S3_KEY)
-            logger.info(f"Vector store files found in S3.")
-        except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-            if error_code == '404' or error_code == 'NoSuchKey':
-                logger.error(f"Vector store files not found in S3 bucket '{BUCKET_NAME}'. Upload a document via Admin portal.")
-            else:
-                logger.error(f"Error checking S3 files: {error_code} - {str(e)}")
-            return None
+        # Initialize LLM and Embeddings
+        self.llm = self._get_llm()
+        self.embeddings = self._get_embeddings()
         
-        local_faiss_path = os.path.join(LOCAL_INDEX_DIR, f"{LOCAL_INDEX_NAME}.faiss")
-        local_pkl_path = os.path.join(LOCAL_INDEX_DIR, f"{LOCAL_INDEX_NAME}.pkl")
+        # Load all school-specific vector stores from S3 on startup
+        self.vector_stores = self._load_all_vector_stores()
 
-        logger.info(f"Downloading vector store files from S3...")
-        s3_client.download_file(BUCKET_NAME, FAISS_S3_KEY, local_faiss_path)
-        s3_client.download_file(BUCKET_NAME, PKL_S3_KEY, local_pkl_path)
+        # Prompt to classify the user's query
+        self.classifier_prompt = f"""
+        Based on the user's query, identify the most relevant school context from the following list:
+        {ALL_SCHOOL_CONTEXTS}
         
-        logger.info("Loading FAISS vector store...")
-        faiss_index = FAISS.load_local(
-            index_name=LOCAL_INDEX_NAME,
-            folder_path=LOCAL_INDEX_DIR,
-            embeddings=bedrock_embeddings,
-            allow_dangerous_deserialization=True
-        )
-        logger.info("Vector store loaded successfully!")
-        return faiss_index
-    except Exception as e:
-        logger.exception(f"Failed to load vector store: {e}")
-        return None
+        If the query mentions a specific school or program (e.g., "law", "SOL", "BBA-LLB", "business", "SBM", "MBA", "commerce", "SOC", "B.Com", "tech", "STME", "B.Tech", "pharmacy", "SPTM", "B.Pharm"), use that school.
+        If the query is general (e.g., "holiday list", "campus address", "who is the vice chancellor?"), use "general".
+        
+        Return ONLY the matching school name from the list.
+        Query: {{query}}
+        School:
+        """
 
-def get_llm():
-    """
-    Initializes and returns the Bedrock LLM.
-    """
-    if not bedrock_client:
-        logger.error("Bedrock client not initialized. Cannot get LLM.")
-        return None
-        
-    try:
+        # Prompt for the RAG answer generation
+        self.rag_prompt_template = """
+        Human: You are an official assistant for SVKM's NMIMS, Hyderabad Campus.
+        Your job is to answer the user's question using ONLY the provided context.
+        Follow these rules:
+        - If the answer is not present in the context, respond exactly with: "I'm sorry, I don't have that specific information in my knowledge base."
+        - Be concise and professional. Start with a direct answer, then provide a short summary or bullet points if helpful.
+        - When citing, use the 'source' and 'page' metadata. Format citations like this:.
+        - Never invent information, URLs, or contact details.
+
+        Context:
+        {context}
+
+        Question: {question}
+
+        Assistant:
+        """
+        self.rag_prompt = PromptTemplate(template=self.rag_prompt_template, input_variables=["context", "question"])
+
+    def _get_llm(self):
         return BedrockLLM(
-            model_id=LLM_MODEL_ID,
-            client=bedrock_client,
-            region_name=AWS_REGION,
-            model_kwargs={
-                "max_tokens": 4000,
-                "temperature": 0.1,
-                "top_p": 0.9
-            }
+            model_id=BEDROCK_LLM_MODEL_ID,
+            client=self.bedrock_client,
+            model_kwargs={"max_tokens": 1024, "temperature": 0.1, "top_p": 0.9}
         )
-    except Exception as e:
-        logger.exception("LLM initialization failed")
-        return None
 
-def get_rag_response(llm, vectorstore, question: str, k: int = 3) -> tuple:
-    """
-    Executes the RAG query.
-    Returns: (answer_text, sources_list, request_id, confidence_score)
-    """
-    guardrail_no_info = "I don't have that information in the NMIMS knowledge base."
-    request_id = f"req_{uuid.uuid4()}"
-    
-    # Using the improved prompt from our last conversation
-    prompt_template = """
-    Human: You are an expert AI assistant for NMIMS. Your job is to answer the user's question based *only* on the provided context.
+    def _get_embeddings(self):
+        return BedrockEmbeddings(
+            model_id=BEDROCK_EMBEDDING_MODEL_ID,
+            client=self.bedrock_client
+        )
 
-    **Context:**
-    {context}
-
-    **Question:**
-    {question}
-
-    **Strict Rules for your Answer:**
-    1.  **Format:** Provide a clean, professional response. Use bullet points or numbered lists if it makes the answer clearer.
-    2.  **No Artifacts:** DO NOT include any stray numbers (like "25."), page markers (like "Page 20 of 23"), or repeated headers from the context. Your response must be pure, clean text.
-    3.  **No Chat History:** DO NOT output the words "Question:", "Assistant:", or "Human:".
-    4.  **Grounded:** Answer *only* using the context. If the answer is not in the context, respond exactly with: "I don't have that information in the NMIMS knowledge base."
-    5.  **Citations:** If you use information from the context, add a citation like [Page X] at the end of the sentence, using the page number from the context.
-
-    Assistant:
-    """
-    
-    PROMPT = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
-
-    try:
-        # Use similarity_search_with_score to get confidence
-        docs_with_scores = vectorstore.similarity_search_with_score(question, k=k)
-        if not docs_with_scores:
-            return guardrail_no_info, [], request_id, 0.0
-
-        # Calculate confidence (Lower distance = higher confidence)
-        # FAISS uses L2 distance; scores are 0 (perfect) to higher numbers.
-        # Let's invert and normalize this to a 0-1 "confidence"
-        # This is a simple heuristic; you can adjust the "scale" factor.
-        scale = 1.5 
-        top_score = docs_with_scores[0][1]
-        confidence = max(0, min(1, (scale - top_score) / scale))
-
-        context_parts = []
-        sources_list = []
+    def _load_all_vector_stores(self):
+        """
+        Loops through all school contexts, downloads their index from S3, 
+        and loads them into a dictionary in memory.
+        """
+        stores = {}
+        for school in ALL_SCHOOL_CONTEXTS:
+            try:
+                s3_faiss_key = f"{KB_ROOT_PREFIX}{school}/vector_store.faiss"
+                s3_pkl_key = f"{KB_ROOT_PREFIX}{school}/vector_store.pkl"
+                
+                # Check if files exist
+                self.s3_client.head_object(Bucket=self.bucket, Key=s3_faiss_key)
+                
+                # Download to a school-specific temp directory
+                local_dir = os.path.join(tempfile.gettempdir(), f"faiss_index_{school}")
+                os.makedirs(local_dir, exist_ok=True)
+                
+                # 3. FIX: Download S3 files as "index.faiss" and "index.pkl"
+                # This matches the default index_name="index" in load_local
+                local_faiss_path = os.path.join(local_dir, "index.faiss")
+                local_pkl_path = os.path.join(local_dir, "index.pkl")
+                
+                logger.info(f"Downloading index for {school}...")
+                self.s3_client.download_file(self.bucket, s3_faiss_key, local_faiss_path)
+                self.s3_client.download_file(self.bucket, s3_pkl_key, local_pkl_path)
+                
+                # Load the index from the local temp file
+                stores[school] = FAISS.load_local(
+                    folder_path=local_dir, 
+                    embeddings=self.embeddings, 
+                    allow_dangerous_deserialization=True, # Required for FAISS .pkl files
+                    index_name="index" # Explicitly state the index name
+                )
+                logger.info(f"[SUCCESS] Loaded vector store for: {school}")
+            except Exception as e:
+                # This is not critical, it just means that school has no documents yet
+                logger.warning(f"[WARN] Could not load vector store for {school}. This is normal if no documents have been added for it. Error: {e}")
         
-        for d, score in docs_with_scores:
-            page = d.metadata.get("page", "?")
-            file = d.metadata.get("source", "Unknown")
-            snippet = (d.page_content or "").strip()
+        if not stores:
+            logger.critical("No vector stores loaded at all. Admin must upload documents.")
             
-            context_parts.append(f"[Page {page}]\n{snippet}")
-            sources_list.append({"file": file, "page": page, "s3_url": None}) # s3_url is in the widget, so we include it
+        return stores
 
-        context = "\n\n".join(context_parts)
-        if not context.strip():
-            return guardrail_no_info, [], request_id, 0.0
+    def _classify_query(self, query: str) -> str:
+        """
+        Uses the LLM to classify the query and find the correct school context.
+        """
+        try:
+            prompt = self.classifier_prompt.format(query=query)
+            response = self.llm.invoke(prompt)
             
-        formatted_prompt = PROMPT.format(context=context, question=question)
-        logger.info(f"Invoking LLM (model_id='{LLM_MODEL_ID}')")
-        
-        response = llm.invoke(formatted_prompt)
-        text = response if isinstance(response, str) else str(response)
-        
-        if not text.strip():
-            return guardrail_no_info, sources_list, request_id, confidence
+            # Clean the response to get just the school name
+            # This regex finds the first occurrence of one of the school names
+            match = re.search(r'\b(' + '|'.join(ALL_SCHOOL_CONTEXTS) + r')\b', response, re.IGNORECASE)
             
-        return text, sources_list, request_id, confidence
-    
-    except Exception as e:
-        logger.exception("Error during RAG response generation")
-        return f"I encountered an error while processing your request: {e}", [], request_id, 0.0
+            if match:
+                # 4. FIX: Robust matching for case-insensitivity
+                raw_match = match.group(0)
+                for school in ALL_SCHOOL_CONTEXTS:
+                    if school.lower() == raw_match.lower():
+                        logger.info(f"Query classified. Context: {school}")
+                        return school # Return the correctly cased name (e.g., "general", "SBM")
 
-def _format_answer_for_lists(text: str) -> str:
-    """Ensure bullets/numbers render with proper line breaks in markdown."""
-    try:
-        text = re.sub(r"^\s*\d+\.\s*$", "", text, flags=re.MULTILINE)
-        text = re.sub(r"(?<!\n)\s*-\s+", lambda m: "\n" + m.group(0).lstrip(), text)
-        text = re.sub(r"(?<!\n)\s*\*\s+", lambda m: "\n" + m.group(0).lstrip(), text)
-        text = re.sub(r"(?<!\n)(\s*)(\d{1,2}[\.)]\s+)", lambda m: "\n" + m.group(2), text)
-        text = re.sub(r"\n\s*\n", "\n\n", text)
-        return text.strip()
-    except Exception:
-        return text # Fallback
+        except Exception as e:
+            logger.error(f"Query classification failed: {e}")
+        
+        # Fallback to general if classification fails or is ambiguous
+        logger.info("Query classification ambiguous. Defaulting to 'general' context.")
+        return "general"
+
+    def get_rag_response(self, query: str) -> dict:
+        """
+        The main RAG pipeline: Classify -> Retrieve -> Generate
+        """
+        try:
+            # 1. Classify the query to find the right school
+            school_context = self._classify_query(query)
+
+            # 2. Select the correct vector store
+            vector_store = self.vector_stores.get(school_context)
+            
+            # Fallback logic: If no specific store, try 'general'
+            if not vector_store:
+                logger.warning(f"No specific store for '{school_context}', falling back to 'general'")
+                vector_store = self.vector_stores.get("general")
+
+            # If still no store, the knowledge base is empty
+            if not vector_store:
+                logger.error("No 'general' vector store found. Knowledge base is empty.")
+                return {"answer": "Knowledge base is empty. Please ask the admin to upload documents.", "sources": []}
+
+            # 3. Get relevant documents (chunks) from that specific store
+            logger.info(f"Searching index '{school_context}' for: {query}")
+            docs = vector_store.similarity_search(query, k=4) # Retrieve 4 chunks
+            
+            if not docs:
+                logger.warning(f"No documents found in '{school_context}' index for query: {query}")
+                return {"answer": "I'm sorry, I don't have that specific information in my knowledge base.", "sources": []}
+
+            # 4. Build context and metadata
+            context = ""
+            sources = []
+            source_set = set() # To de-duplicate sources
+            
+            for doc in docs:
+                source_file = doc.metadata.get('source', 'Unknown')
+                # Try to get page, fallback to row, else 'N/A'
+                page_num = doc.metadata.get('page', doc.metadata.get('row', 'N/A'))
+                source_key = f"{source_file}|{page_num}"
+
+                # Add context for the LLM
+                context += f"--- START OF CONTEXT (Source: {source_file}, Page: {page_num}) ---\n"
+                context += doc.page_content + "\n"
+                context += f"--- END OF CONTEXT (Source: {source_file}) ---\n\n"
+                
+                # Add unique sources for citation
+                if source_key not in source_set:
+                    # 5. FIX: Send clean metadata to the frontend
+                    # The frontend expects 'file' and 'page'
+                    sources.append({
+                        "file": source_file,
+                        "page": page_num
+                    })
+                    source_set.add(source_key)
+
+            # 5. Generate the final answer
+            formatted_prompt = self.rag_prompt.format(context=context, question=query)
+            answer_text = self.llm.invoke(formatted_prompt)
+            
+            # Post-process to remove extra whitespace
+            answer_text = re.sub(r'^\s*Assistant:\s*', '', answer_text).strip()
+            
+            return {"answer": answer_text, "sources": sources}
+
+        except Exception as e:
+            logger.error(f"RAG Error: {e}", exc_info=True)
+            return {"answer": "I encountered an error while processing your request. Please try again.", "sources": []}

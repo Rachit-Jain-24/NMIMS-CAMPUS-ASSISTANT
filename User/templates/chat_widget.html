@@ -5,10 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NMIMS Campus Assistant</title>
     
-    <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Load Inter font -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -40,29 +38,33 @@
         #nmims-chat-messages::-webkit-scrollbar-thumb:hover {
             background: #a81c22; /* Darker NMIMS Red */
         }
+        
+        /* --- NEW: Style for Language Select --- */
+        #nmims-lang-select {
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22currentColor%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E');
+            background-repeat: no-repeat;
+            background-position: right 0.5rem center;
+            background-size: 1.25em;
+            padding-right: 2rem; /* Make space for the icon */
+        }
+        
+        /* --- NEW: Style for Mic Button animation --- */
+        .mic-active {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(210, 35, 42, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(210, 35, 42, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(210, 35, 42, 0); }
+        }
 
-        /* Simple spinner for loading overlay (if you add one) */
-        .spinner {
-            border: 4px solid rgba(255, 255, 255, 0.3);
-            border-radius: 50%;
-            border-top: 4px solid #fff;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
     </style>
 </head>
 <body class="h-full">
 
-    <!-- 
-      ========================================
-      FLOATING CHAT BUTTON
-      ======================================== 
-    -->
     <button 
         id="nmims-chat-button" 
         class="fixed bottom-5 right-5 w-16 h-16 bg-[#D2232A] rounded-full shadow-lg flex items-center justify-center text-white cursor-pointer transform transition-all duration-300 hover:scale-105 hover:bg-[#a81c22] focus:outline-none focus:ring-4 focus:ring-red-300" 
@@ -70,19 +72,12 @@
         tabindex="0"
         aria-label="Open NMIMS help chat"
     >
-        <!-- Icon: Chat bubble -->
         <svg id="nmims-button-icon" class="w-8 h-8" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
             <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
         </svg>
-        <!-- Logo (hidden by default, shown by JS) -->
         <img id="nmims-button-logo" src="" alt="Chat" class="w-10 h-10 rounded-full object-cover hidden" />
     </button>
 
-    <!-- 
-      ========================================
-      CHAT MODAL OVERLAY
-      ======================================== 
-    -->
     <div 
         id="nmims-chat-overlay" 
         class="fixed inset-0 bg-black bg-opacity-50 z-40 items-center justify-center hidden" 
@@ -91,14 +86,8 @@
         aria-hidden="true"
         aria-labelledby="nmims-chat-title"
     >
-        <!-- Chat Modal -->
         <div class="nmims-chat-modal flex flex-col w-full h-full sm:w-[500px] sm:h-auto sm:max-h-[90vh] bg-white sm:rounded-xl shadow-2xl overflow-hidden animate-slide-up">
             
-            <!-- 
-              ========================================
-              MODAL HEADER
-              ======================================== 
-            -->
             <div class="nmims-chat-header flex items-center justify-between p-4 bg-[#D2232A] text-white flex-shrink-0">
                 <div class="flex items-center gap-3">
                     <img id="nmims-header-logo" src="" alt="NMIMS Logo" class="w-10 h-10 rounded-full bg-white p-1" />
@@ -107,29 +96,26 @@
                         <div class="text-sm text-red-100 leading-tight">Your Smart Companion</div>
                     </div>
                 </div>
-                <button 
-                    id="nmims-chat-close" 
-                    class="nmims-chat-close text-3xl text-red-200 hover:text-white transition-colors" 
-                    aria-label="Close chat"
-                >
-                    &times;
-                </button>
+                
+                <div class="flex items-center gap-2">
+                    <select id="nmims-lang-select" class="text-sm bg-white text-gray-800 font-medium py-1 px-2 rounded-md cursor-pointer outline-none focus:ring-2 focus:ring-white">
+                        <option value="en">English</option>
+                        <option value="hi">हिंदी (Hindi)</option>
+                        <option value="te">తెలుగు (Telugu)</option>
+                    </select>
+                    <button 
+                        id="nmims-chat-close" 
+                        class="nmims-chat-close text-3xl text-red-200 hover:text-white transition-colors" 
+                        aria-label="Close chat"
+                    >
+                        &times;
+                    </button>
+                </div>
             </div>
 
-            <!-- 
-              ========================================
-              MESSAGES AREA
-              ======================================== 
-            -->
             <div id="nmims-chat-messages" class="nmims-chat-messages flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50 min-h-[300px]">
-                <!-- Messages will be dynamically injected here by JavaScript -->
-            </div>
+                </div>
 
-            <!-- 
-              ========================================
-              INPUT AREA
-              ======================================== 
-            -->
             <div class="nmims-chat-input-area p-4 bg-white border-t border-gray-200">
                 <div class="nmims-chat-input-container flex items-end gap-3">
                     <textarea 
@@ -139,12 +125,21 @@
                         rows="1"
                         aria-label="Message input"
                     ></textarea>
+                    
+                    <button 
+                        id="nmims-chat-mic" 
+                        class="nmims-chat-mic w-11 h-11 bg-gray-200 text-gray-700 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300 hover:bg-gray-300"
+                        aria-label="Start voice input"
+                    >
+                        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1.2-9.1c0-.66.54-1.2 1.2-1.2.66 0 1.2.54 1.2 1.2l-.01 6.2c0 .66-.53 1.2-1.19 1.2-.66 0-1.2-.54-1.2-1.2V4.9zm6.5 6.1c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>
+                        </svg>
+                    </button>
                     <button 
                         id="nmims-chat-send" 
                         class="nmims-chat-send w-11 h-11 bg-[#D2232A] text-white rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300 hover:bg-[#a81c22] disabled:opacity-50 disabled:cursor-not-allowed"
                         aria-label="Send message"
                     >
-                        <!-- Send Icon -->
                         <svg class="w-5 h-5" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
                         </svg>
@@ -154,26 +149,14 @@
         </div>
     </div>
 
-    <!-- 
-      ========================================
-      SOURCE VIEWER OVERLAY
-      ======================================== 
-    -->
     <div id="nmims-source-viewer" class="nmims-source-viewer fixed inset-0 bg-black bg-opacity-70 z-50 items-center justify-center p-4 hidden" aria-hidden="true">
         <div class="nmims-source-viewer-content bg-white p-6 rounded-lg max-w-3xl w-full max-h-[80vh] overflow-y-auto relative">
             <button class="nmims-source-viewer-close absolute top-3 right-3 w-8 h-8 bg-[#D2232A] text-white rounded-full text-lg font-bold flex items-center justify-center" aria-label="Close source viewer">&times;</button>
             <div id="nmims-source-viewer-body" class="mt-4 pr-4">
-                <!-- Source content will be injected here -->
-            </div>
+                </div>
         </div>
     </div>
 
-    <!-- 
-      ========================================
-      JAVASCRIPT LOGIC
-      (Copied from your previous file, with updated CONFIG)
-      ======================================== 
-    -->
     <script>
         // ========================================
         // CONFIGURATION
@@ -182,7 +165,6 @@
             apiBase: 'http://localhost:8086/api',
             sessionId: 'hack-demo',
             authToken: null,
-            // *** UPDATED: Use Flask's url_for for static assets ***
             logoSmall: "{{ url_for('static', filename='media/logo.png') }}",
             logoLarge: "{{ url_for('static', filename='media/logo.png') }}",
             mockMode: false,
@@ -202,9 +184,15 @@
         const state = {
             isOpen: false,
             messages: [],
-            queryCache: new Map(), // { query: { response, timestamp } }
+            queryCache: new Map(),
             currentUserId: null,
-            focusTrap: null
+            focusTrap: null,
+            // --- NEW: MediaRecorder (MIC FIX) ---
+            mediaRecorder: null,
+            audioChunks: [],
+            isRecording: false,
+            audioStream: null
+            // ------------------------------------
         };
 
         // ========================================
@@ -218,9 +206,11 @@
             modal: document.querySelector('.nmims-chat-modal'),
             headerLogo: document.getElementById('nmims-header-logo'),
             closeBtn: document.getElementById('nmims-chat-close'),
+            langSelect: document.getElementById('nmims-lang-select'), // <-- NEW
             messagesContainer: document.getElementById('nmims-chat-messages'),
             input: document.getElementById('nmims-chat-input'),
             sendBtn: document.getElementById('nmims-chat-send'),
+            micBtn: document.getElementById('nmims-chat-mic'), // <-- NEW
             sourceViewer: document.getElementById('nmims-source-viewer'),
             sourceViewerBody: document.getElementById('nmims-source-viewer-body')
         };
@@ -231,7 +221,10 @@
         function init() {
             loadLogo(elements.buttonLogo, CONFIG.logoSmall, elements.buttonIcon);
             loadLogo(elements.headerLogo, CONFIG.logoLarge);
-            loadChatHistory();
+            
+            // --- FIX 1: Do not load chat history ---
+            // loadChatHistory(); 
+            // ---------------------------------------
 
             elements.button.addEventListener('click', openModal);
             elements.button.addEventListener('keydown', handleButtonKeydown);
@@ -240,6 +233,10 @@
             elements.sendBtn.addEventListener('click', sendMessage);
             elements.input.addEventListener('keydown', handleInputKeydown);
             elements.input.addEventListener('input', autoResizeTextarea);
+            
+            // --- NEW: Add mic button listener ---
+            elements.micBtn.addEventListener('click', toggleAudioRecording);
+            // ------------------------------------
 
             elements.sourceViewer.querySelector('.nmims-source-viewer-close')
                 .addEventListener('click', closeSourceViewer);
@@ -362,7 +359,9 @@
                 showQuickReplies: true
             };
             state.messages.push(welcomeMsg);
-            saveChatHistory();
+            // --- FIX 1: Do not save history ---
+            // saveChatHistory();
+            // ----------------------------------
             renderMessages();
         }
 
@@ -392,15 +391,9 @@
             sendMessage();
             console.log('[NMIMS Chat] Quick reply sent:', text);
             
-            const quickReplies = elements.messagesContainer.querySelector('.nmims-quick-replies');
-            if (quickReplies) {
-                quickReplies.remove();
-                const lastMsg = state.messages[state.messages.length - 1];
-                if (lastMsg && lastMsg.showQuickReplies) {
-                    lastMsg.showQuickReplies = false;
-                    saveChatHistory();
-                }
-            }
+            // --- FIX 3: Do not remove quick replies ---
+            // (Logic removed)
+            // ------------------------------------------
         }
 
         // ========================================
@@ -413,9 +406,13 @@
                 const msgElement = createMessageElement(msg);
                 elements.messagesContainer.appendChild(msgElement);
 
-                if (index === state.messages.length - 1 && msg.showQuickReplies) {
-                    elements.messagesContainer.appendChild(renderQuickReplies());
+                // --- FIX 3: Check *last message only* for quick replies ---
+                // This logic ensures replies only show with the *first* welcome message
+                // and not after every single bot message.
+                if (index === 0 && msg.type === 'bot' && state.messages.length === 1) {
+                     elements.messagesContainer.appendChild(renderQuickReplies());
                 }
+                // --------------------------------------------------------
             });
 
             scrollToBottom();
@@ -576,14 +573,9 @@
             const query = elements.input.value.trim();
             if (!query) return;
 
-            const quickReplies = elements.messagesContainer.querySelector('.nmims-quick-replies');
-            if (quickReplies) {
-                quickReplies.remove();
-                const lastMsg = state.messages[state.messages.length - 1];
-                if (lastMsg && lastMsg.showQuickReplies) {
-                    lastMsg.showQuickReplies = false;
-                }
-            }
+            // --- FIX 3: Do not remove quick replies ---
+            // (logic removed)
+            // ------------------------------------------
 
             const userMsg = {
                 type: 'user',
@@ -591,7 +583,11 @@
                 timestamp: new Date().toISOString()
             };
             state.messages.push(userMsg);
-            saveChatHistory();
+            
+            // --- FIX 1: Do not save history ---
+            // saveChatHistory();
+            // ----------------------------------
+            
             renderMessages();
 
             elements.input.value = '';
@@ -628,15 +624,20 @@
             state.messages.push(typingMsg);
             renderMessages();
             elements.sendBtn.disabled = true;
+            elements.micBtn.disabled = true; // <-- NEW: Disable mic during response
 
             try {
                 const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 10000); 
+                const timeout = setTimeout(() => controller.abort(), 30000); // 30 seconds for Bedrock LLM 
 
                 const headers = { 'Content-Type': 'application/json' };
                 if (CONFIG.authToken) {
                     headers['Authorization'] = CONFIG.authToken;
                 }
+                
+                // --- NEW: Get language from dropdown ---
+                const selectedLang = elements.langSelect.value || 'en';
+                // -------------------------------------
 
                 const apiResponse = await fetch(`${CONFIG.apiBase}/chat`, {
                     method: 'POST',
@@ -644,13 +645,15 @@
                     body: JSON.stringify({
                         session_id: CONFIG.sessionId,
                         user_id: state.currentUserId,
-                        query: query
+                        query: query,
+                        language: selectedLang // <-- NEW: Send language to backend
                     }),
                     signal: controller.signal
                 });
 
                 clearTimeout(timeout);
                 elements.sendBtn.disabled = false;
+                elements.micBtn.disabled = false; // <-- NEW: Re-enable mic
 
                 if (!apiResponse.ok) {
                     throw new Error(`API error: ${apiResponse.status}`);
@@ -665,20 +668,35 @@
             } catch (error) {
                 console.error('[NMIMS Chat] Query error:', error);
                 elements.sendBtn.disabled = false;
+                elements.micBtn.disabled = false; // <-- NEW: Re-enable mic
                 state.messages = state.messages.filter(m => m.type !== 'typing');
 
-                const isOffline = !navigator.onLine || error.name === 'AbortError';
+                // Better error detection: only treat as offline if actually offline, not on timeout
+                const isActuallyOffline = !navigator.onLine;
+                const isTimeout = error.name === 'AbortError';
+                
+                let errorText;
+                if (isActuallyOffline) {
+                    errorText = '🔌 You appear to be offline. Your question has been saved.';
+                } else if (isTimeout) {
+                    errorText = '⏱️ The request timed out. The server might be busy. Please try again.';
+                } else {
+                    errorText = '❌ Sorry, something went wrong. Please try again.';
+                }
+                
                 const errorMsg = {
                     type: 'error',
-                    text: isOffline 
-                        ? '🔌 You appear to be offline. Your question has been saved.'
-                        : '❌ Sorry, something went wrong. Please try again.',
+                    text: errorText,
                     timestamp: new Date().toISOString(),
                     retryQuery: query,
-                    offlineMode: isOffline
+                    offlineMode: isActuallyOffline
                 };
                 state.messages.push(errorMsg);
-                saveChatHistory();
+                
+                // --- FIX 1: Do not save history ---
+                // saveChatHistory();
+                // ----------------------------------
+                
                 renderMessages();
             }
         }
@@ -693,12 +711,17 @@
                 request_id: response.request_id || generateRequestId()
             };
 
-            if (response.confidence < 0.6 || (response.sources.length === 0 && isPolicyQuestion(originalQuery))) {
-                botMsg.text += "\n\n⚠️ I'm not entirely sure about this answer. For accurate information, please contact Student Affairs: studentaffairs@nmims.edu";
-            }
+            // This logic is now handled on the backend based on confidence/sources
+            // if (response.confidence < 0.6 || (response.sources.length === 0 && isPolicyQuestion(originalQuery))) {
+            //     botMsg.text += "\n\n⚠️ I'm not entirely sure about this answer. For accurate information, please contact Student Affairs: studentaffairs@nmims.edu";
+            // }
 
             state.messages.push(botMsg);
-            saveChatHistory();
+            
+            // --- FIX 1: Do not save history ---
+            // saveChatHistory();
+            // ----------------------------------
+            
             renderMessages();
 
             console.log('[NMIMS Chat] Response received, confidence:', response.confidence);
@@ -715,10 +738,138 @@
         }
 
         // ========================================
+        // --- NEW: SPEECH RECOGNITION (MediaRecorder FIX) ---
+        // ========================================
+        
+        async function toggleAudioRecording() {
+            if (state.isRecording) {
+                // --- STOP RECORDING ---
+                try {
+                    state.mediaRecorder.stop(); // This will trigger the 'onstop' event
+                    state.isRecording = false;
+                    // UI will be reset in 'onstop'
+                } catch (e) {
+                    console.error("Error stopping recorder:", e);
+                    resetMicButton();
+                }
+                
+            } else {
+                // --- START RECORDING ---
+                try {
+                    // 1. Get permissions
+                    state.audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    
+                    // 2. Create recorder
+                    state.mediaRecorder = new MediaRecorder(state.audioStream);
+                    state.audioChunks = []; // Clear previous chunks
+                    
+                    // 3. Set up event handlers
+                    state.mediaRecorder.ondataavailable = (event) => {
+                        state.audioChunks.push(event.data);
+                    };
+                    
+                    state.mediaRecorder.onstop = () => {
+                        console.log("Recording stopped, processing audio...");
+                        // Stop the microphone track
+                        if (state.audioStream) {
+                            state.audioStream.getTracks().forEach(track => track.stop());
+                            state.audioStream = null;
+                        }
+                        
+                        // Convert audio chunks to a single Blob
+                        const audioBlob = new Blob(state.audioChunks, { type: 'audio/webm' });
+                        
+                        // Convert Blob to Base64 to send as JSON
+                        const reader = new FileReader();
+                        reader.readAsDataURL(audioBlob);
+                        reader.onloadend = () => {
+                            const base64AudioData = reader.result;
+                            transcribeAudio(base64AudioData);
+                        };
+                        
+                        resetMicButton();
+                    };
+
+                    // 4. Start recording
+                    state.mediaRecorder.start();
+                    state.isRecording = true;
+                    
+                    // 5. Update UI
+                    elements.micBtn.classList.add('mic-active', 'bg-red-500', 'text-white');
+                    elements.micBtn.setAttribute('aria-label', 'Stop listening');
+                    elements.input.placeholder = "Listening... Click mic to stop";
+
+                } catch (err) {
+                    console.error("Error starting recording:", err);
+                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                        alert('Microphone permission denied. Please allow microphone access in your browser settings.');
+                    } else {
+                        alert('Could not start recorder. Is a microphone connected?');
+                    }
+                    resetMicButton();
+                }
+            }
+        }
+
+        async function transcribeAudio(base64AudioData) {
+            elements.input.placeholder = "Transcribing audio...";
+            elements.micBtn.disabled = true;
+            elements.sendBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${CONFIG.apiBase}/transcribe`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        audio_data: base64AudioData
+                    })
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.error || 'Transcription failed');
+                }
+
+                const data = await response.json();
+                
+                if (data.transcript) {
+                    elements.input.value = data.transcript;
+                    autoResizeTextarea();
+                    sendMessage(); // Automatically send the transcribed text
+                } else {
+                    elements.input.placeholder = "Could not understand audio.";
+                }
+
+            } catch (error) {
+                console.error("Transcription error:", error);
+                alert(`Transcription failed: ${error.message}`);
+                elements.input.placeholder = "Ask me anything about campus...";
+            } finally {
+                elements.micBtn.disabled = false;
+                elements.sendBtn.disabled = false;
+            }
+        }
+        
+        function resetMicButton() {
+            state.isRecording = false;
+            if (state.audioStream) {
+                state.audioStream.getTracks().forEach(track => track.stop());
+                state.audioStream = null;
+            }
+            state.mediaRecorder = null;
+            state.audioChunks = [];
+            
+            elements.micBtn.classList.remove('mic-active', 'bg-red-500', 'text-white');
+            elements.micBtn.setAttribute('aria-label', 'Start voice input');
+            elements.input.placeholder = "Ask me anything about campus...";
+        }
+        // ------------------------------------
+
+        // ========================================
         // RETRY QUERY
         // ========================================
         window.retryQuery = function(query) {
-            const unescapedQuery = query.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+            const unescapedQuery = query.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/>/g, '>').replace(/"/g, '"').replace(/'/g, '&#039;');
             elements.input.value = unescapedQuery;
             sendMessage();
         };
@@ -842,29 +993,14 @@
         }
 
         // ========================================
-        // SESSION STORAGE
+        // SESSION STORAGE (FIX 1: DISABLED)
         // ========================================
         function saveChatHistory() {
-            try {
-                sessionStorage.setItem('nmims-chat-history', JSON.stringify(state.messages));
-            } catch (error) {
-                console.warn('[NMIMS Chat] Failed to save chat history:', error);
-            }
+            // No-op
         }
 
         function loadChatHistory() {
-            try {
-                const saved = sessionStorage.getItem('nmims-chat-history');
-                if (saved) {
-                    state.messages = JSON.parse(saved);
-                    state.messages.forEach(msg => {
-                        if (msg.showQuickReplies) msg.showQuickReplies = false;
-                    });
-                    console.log('[NMIMS Chat] Loaded', state.messages.length, 'messages from session storage');
-                }
-            } catch (error) {
-                console.warn('[NMIMS Chat] Failed to load chat history:', error);
-            }
+            // No-op
         }
 
         // ========================================

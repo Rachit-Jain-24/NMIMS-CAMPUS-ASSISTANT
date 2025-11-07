@@ -14,3 +14,4 @@ python-pptx          # For PowerPoint loader
 unstructured         # For PowerPoint loader
 libmagic             # Dependency for unstructured
 python-magic         # Dependency for unstructured
+flask-cors

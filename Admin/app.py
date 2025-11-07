@@ -6,16 +6,19 @@ from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
 # Import the processing logic from our refactored module
+# This assumes backend_processor.py is in the same folder
 import backend_processor as bp
 
 load_dotenv()
 
 # --- Flask App Configuration ---
+# 1. FIX: Use __name__ (double underscores)
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'a_very_secret_fallback_key_CHANGE_ME')
-app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB file upload limit
-ALLOWED_EXTENSIONS = {'pdf', 'csv', 'xlsx', 'docx', 'txt', 'pptx'}
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB file upload limit (cleaned)
+
+ALLOWED_EXTENSIONS = {'pdf', 'csv', 'xlsx', 'docx', 'pptx', 'txt'}
 
 def allowed_file(filename):
     return '.' in filename and \
@@ -28,10 +31,10 @@ def index():
     """
     Handles displaying the main page and listing the files.
     """
-    # On a GET request, list files and render the page
     config_info = {
         "S3_BUCKET": bp.BUCKET_NAME,
-        "S3_PATH": "nmims_rag/",
+        # 2. REVERTED FIX: Kept your original KB_ROOT_PREFIX, as it's correct
+        "S3_KB_PATH": bp.KB_ROOT_PREFIX,
         "S3_SOURCE_PREFIX": bp.SOURCE_DOCS_PREFIX,
         "CHUNK_SIZE": bp.TEXT_CHUNK_SIZE,
         "CHUNK_OVERLAP": bp.TEXT_CHUNK_OVERLAP,
@@ -42,6 +45,7 @@ def index():
     try:
         source_files = bp.list_source_files()
     except Exception as e:
+        bp.logger.error(f"Error listing files from S3: {e}", exc_info=True)
         flash(f'Error listing files from S3: {e}', 'danger')
         source_files = []
         
@@ -73,7 +77,7 @@ def upload_file_router():
                     file.save(temp_file_path)
                     bp.logger.info(f"File saved to temp path: {temp_file_path}")
                     
-                    # Upload the file to S3 source prefix
+                    # Upload the file to S3 source prefix (staging)
                     if bp.upload_source_file(temp_file_path, filename):
                         uploaded_count += 1
                     else:
@@ -84,7 +88,7 @@ def upload_file_router():
                     bp.logger.error(f"Critical error during upload of {filename}: {e}", exc_info=True)
                     errors.append(filename)
                     flash(f'An unexpected error occurred with {filename}: {e}', 'danger')
-        
+            
         elif file:
             errors.append(file.filename)
             flash(f'Invalid file type: "{file.filename}". Allowed types are: {", ".join(ALLOWED_EXTENSIONS)}', 'danger')
@@ -105,8 +109,9 @@ def rebuild_knowledge_base_router():
     """
     try:
         bp.logger.info("Rebuild request received. Starting...")
-        file_count = bp.rebuild_knowledge_base()
-        flash(f'✅ Knowledge base rebuilt successfully from {file_count} file(s).', 'success')
+        # 3. REVERTED FIX: Kept your original total_chunks logic, as it's correct
+        total_chunks = bp.rebuild_knowledge_base()  
+        flash(f'✅ Knowledge base rebuilt successfully ({total_chunks} chunks).', 'success')
     except Exception as e:
         bp.logger.error(f"Critical error during /rebuild route: {e}", exc_info=True)
         flash(f'An unexpected error occurred during rebuild: {e}', 'danger')
@@ -139,7 +144,7 @@ def delete_file_router():
 @app.route('/clear', methods=['POST'])
 def clear_knowledge_base_router():
     """
-    Handles the request to delete the vector store AND all source files from S3.
+    Handles the request to delete ALL federated vector stores AND all source files.
     """
     try:
         if bp.delete_vector_store():
@@ -153,6 +158,8 @@ def clear_knowledge_base_router():
     return redirect(url_for('index'))
 
 
+# 4. FIX: Use __name__ and __main__ (double underscores)
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8085))
+    # Run with Gunicorn in production, not this.
+    port = int(os.environ.get('PORT', 5000)) # Changed to 5000
     app.run(debug=True, host='0.0.0.0', port=port)
