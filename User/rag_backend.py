@@ -48,15 +48,19 @@ class RAGBackend:
         School:
         """
 
-        # Prompt for the RAG answer generation
+        # --- ENHANCEMENT: Updated RAG prompt to include chat history ---
         self.rag_prompt_template = """
         Human: You are an official assistant for SVKM's NMIMS, Hyderabad Campus.
-        Your job is to answer the user's question using ONLY the provided context.
+        Your job is to answer the user's question using ONLY the provided context and chat history.
         Follow these rules:
         - If the answer is not present in the context, respond exactly with: "I'm sorry, I don't have that specific information in my knowledge base."
         - Be concise and professional. Start with a direct answer, then provide a short summary or bullet points if helpful.
-        - When citing, use the 'source' and 'page' metadata. Format citations like this:.
+        - When citing, use the 'source' and 'page' metadata.
         - Never invent information, URLs, or contact details.
+        - Use the chat history to understand follow-up questions (e.g., if the user asks "what about for SBM?" after asking about placements).
+
+        Chat History:
+        {history}
 
         Context:
         {context}
@@ -65,7 +69,8 @@ class RAGBackend:
 
         Assistant:
         """
-        self.rag_prompt = PromptTemplate(template=self.rag_prompt_template, input_variables=["context", "question"])
+        # --- ENHANCEMENT: Added "history" to input_variables ---
+        self.rag_prompt = PromptTemplate(template=self.rag_prompt_template, input_variables=["history", "context", "question"])
 
     def _get_llm(self):
         return BedrockLLM(
@@ -99,7 +104,6 @@ class RAGBackend:
                 os.makedirs(local_dir, exist_ok=True)
                 
                 # 3. FIX: Download S3 files as "index.faiss" and "index.pkl"
-                # This matches the default index_name="index" in load_local
                 local_faiss_path = os.path.join(local_dir, "index.faiss")
                 local_pkl_path = os.path.join(local_dir, "index.pkl")
                 
@@ -111,13 +115,12 @@ class RAGBackend:
                 stores[school] = FAISS.load_local(
                     folder_path=local_dir, 
                     embeddings=self.embeddings, 
-                    allow_dangerous_deserialization=True, # Required for FAISS .pkl files
-                    index_name="index" # Explicitly state the index name
+                    allow_dangerous_deserialization=True, 
+                    index_name="index" 
                 )
                 logger.info(f"[SUCCESS] Loaded vector store for: {school}")
             except Exception as e:
-                # This is not critical, it just means that school has no documents yet
-                logger.warning(f"[WARN] Could not load vector store for {school}. This is normal if no documents have been added for it. Error: {e}")
+                logger.warning(f"[WARN] Could not load vector store for {school}. Error: {e}")
         
         if not stores:
             logger.critical("No vector stores loaded at all. Admin must upload documents.")
@@ -132,26 +135,23 @@ class RAGBackend:
             prompt = self.classifier_prompt.format(query=query)
             response = self.llm.invoke(prompt)
             
-            # Clean the response to get just the school name
-            # This regex finds the first occurrence of one of the school names
             match = re.search(r'\b(' + '|'.join(ALL_SCHOOL_CONTEXTS) + r')\b', response, re.IGNORECASE)
             
             if match:
-                # 4. FIX: Robust matching for case-insensitivity
                 raw_match = match.group(0)
                 for school in ALL_SCHOOL_CONTEXTS:
                     if school.lower() == raw_match.lower():
                         logger.info(f"Query classified. Context: {school}")
-                        return school # Return the correctly cased name (e.g., "general", "SBM")
+                        return school 
 
         except Exception as e:
             logger.error(f"Query classification failed: {e}")
         
-        # Fallback to general if classification fails or is ambiguous
         logger.info("Query classification ambiguous. Defaulting to 'general' context.")
         return "general"
 
-    def get_rag_response(self, query: str) -> dict:
+    # --- ENHANCEMENT: Method signature updated to accept chat_history ---
+    def get_rag_response(self, query: str, chat_history: list) -> dict:
         """
         The main RAG pipeline: Classify -> Retrieve -> Generate
         """
@@ -159,58 +159,63 @@ class RAGBackend:
             # 1. Classify the query to find the right school
             school_context = self._classify_query(query)
 
-            # 2. Select the correct vector store
+            # --- ENHANCEMENT: "Classify + General" search strategy ---
+            
+            # 2. Select the correct vector stores
             vector_store = self.vector_stores.get(school_context)
+            general_store = self.vector_stores.get("general")
             
-            # Fallback logic: If no specific store, try 'general'
-            if not vector_store:
-                logger.warning(f"No specific store for '{school_context}', falling back to 'general'")
-                vector_store = self.vector_stores.get("general")
-
-            # If still no store, the knowledge base is empty
-            if not vector_store:
-                logger.error("No 'general' vector store found. Knowledge base is empty.")
+            all_docs = []
+            
+            # 3. Search the specific store
+            if vector_store:
+                logger.info(f"Searching index '{school_context}' for: {query}")
+                all_docs.extend(vector_store.similarity_search(query, k=2)) # Get top 2
+            
+            # 4. ALWAYS search the 'general' store (if it's not the same store)
+            if general_store and school_context != "general":
+                logger.info(f"Searching index 'general' for: {query}")
+                all_docs.extend(general_store.similarity_search(query, k=2)) # Get top 2
+            
+            # Fallback if both failed
+            if not vector_store and not general_store:
+                logger.error("No 'general' or specific vector store found. Knowledge base is empty.")
                 return {"answer": "Knowledge base is empty. Please ask the admin to upload documents.", "sources": []}
+            # --- End of Enhancement ---
 
-            # 3. Get relevant documents (chunks) from that specific store
-            logger.info(f"Searching index '{school_context}' for: {query}")
-            docs = vector_store.similarity_search(query, k=4) # Retrieve 4 chunks
-            
-            if not docs:
-                logger.warning(f"No documents found in '{school_context}' index for query: {query}")
+            if not all_docs:
+                logger.warning(f"No documents found in '{school_context}' or 'general' index for query: {query}")
                 return {"answer": "I'm sorry, I don't have that specific information in my knowledge base.", "sources": []}
 
-            # 4. Build context and metadata
+            # 5. Build context and metadata
             context = ""
             sources = []
             source_set = set() # To de-duplicate sources
             
-            for doc in docs:
+            # Use the combined 'all_docs' list
+            for doc in all_docs:
                 source_file = doc.metadata.get('source', 'Unknown')
-                # Try to get page, fallback to row, else 'N/A'
                 page_num = doc.metadata.get('page', doc.metadata.get('row', 'N/A'))
                 source_key = f"{source_file}|{page_num}"
 
-                # Add context for the LLM
                 context += f"--- START OF CONTEXT (Source: {source_file}, Page: {page_num}) ---\n"
                 context += doc.page_content + "\n"
                 context += f"--- END OF CONTEXT (Source: {source_file}) ---\n\n"
                 
-                # Add unique sources for citation
                 if source_key not in source_set:
-                    # 5. FIX: Send clean metadata to the frontend
-                    # The frontend expects 'file' and 'page'
                     sources.append({
                         "file": source_file,
                         "page": page_num
                     })
                     source_set.add(source_key)
 
-            # 5. Generate the final answer
-            formatted_prompt = self.rag_prompt.format(context=context, question=query)
+            # --- ENHANCEMENT: Format chat history for the prompt ---
+            formatted_history = "\n".join([f"Human: {turn.get('query', '')}\nAssistant: {turn.get('answer', '')}" for turn in chat_history])
+            
+            # 6. Generate the final answer
+            formatted_prompt = self.rag_prompt.format(history=formatted_history, context=context, question=query)
             answer_text = self.llm.invoke(formatted_prompt)
             
-            # Post-process to remove extra whitespace
             answer_text = re.sub(r'^\s*Assistant:\s*', '', answer_text).strip()
             
             return {"answer": answer_text, "sources": sources}

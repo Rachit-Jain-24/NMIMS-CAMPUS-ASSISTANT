@@ -5,18 +5,16 @@ from flask import Flask, render_template, request, flash, redirect, url_for
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
-# Import the processing logic from our refactored module
-# This assumes backend_processor.py is in the same folder
+# Import the processing logic
 import backend_processor as bp
 
 load_dotenv()
 
 # --- Flask App Configuration ---
-# 1. FIX: Use __name__ (double underscores)
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'a_very_secret_fallback_key_CHANGE_ME')
-app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB file upload limit (cleaned)
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB file upload limit
 
 ALLOWED_EXTENSIONS = {'pdf', 'csv', 'xlsx', 'docx', 'pptx', 'txt'}
 
@@ -33,7 +31,6 @@ def index():
     """
     config_info = {
         "S3_BUCKET": bp.BUCKET_NAME,
-        # 2. REVERTED FIX: Kept your original KB_ROOT_PREFIX, as it's correct
         "S3_KB_PATH": bp.KB_ROOT_PREFIX,
         "S3_SOURCE_PREFIX": bp.SOURCE_DOCS_PREFIX,
         "CHUNK_SIZE": bp.TEXT_CHUNK_SIZE,
@@ -41,7 +38,6 @@ def index():
         "EMBEDDING_MODEL": bp.BEDROCK_MODEL_ID,
     }
     
-    # Fetch the list of files from S3
     try:
         source_files = bp.list_source_files()
     except Exception as e:
@@ -49,15 +45,29 @@ def index():
         flash(f'Error listing files from S3: {e}', 'danger')
         source_files = []
         
-    return render_template('index.html', config_info=config_info, files=source_files)
+    return render_template(
+        'index.html', 
+        config_info=config_info, 
+        files=source_files,
+        school_contexts=bp.ALL_SCHOOL_CONTEXTS,
+        doc_types=bp.ALL_DOC_TYPES
+    )
 
 
 @app.route('/upload', methods=['POST'])
 def upload_file_router():
     """
-    Handles uploading multiple files to the S3 staging folder.
+    --- *** NEW SMART UPLOAD LOGIC *** ---
+    Handles uploading files AND incrementally updating the vector store.
+    This is now the FAST path.
     """
-    # Use getlist to handle multiple files
+    school_context = request.form.get('school_context')
+    doc_type = request.form.get('doc_type')
+
+    if not school_context or not doc_type:
+        flash('Missing school context or document type.', 'danger')
+        return redirect(url_for('index'))
+        
     files = request.files.getlist('file')
 
     if not files or files[0].filename == '':
@@ -66,6 +76,7 @@ def upload_file_router():
 
     uploaded_count = 0
     errors = []
+    total_chunks = 0
 
     for file in files:
         if file and allowed_file(file.filename):
@@ -77,27 +88,40 @@ def upload_file_router():
                     file.save(temp_file_path)
                     bp.logger.info(f"File saved to temp path: {temp_file_path}")
                     
-                    # Upload the file to S3 source prefix (staging)
-                    if bp.upload_source_file(temp_file_path, filename):
+                    # 1. Upload the raw file to S3 (for backup and rebuilds)
+                    standardized_filename = bp.upload_source_file(temp_file_path, filename, school_context, doc_type)
+                    if not standardized_filename:
+                         raise Exception("S3 upload failed.")
+
+                    # 2. Add the file to the live knowledge base (fast, incremental)
+                    # --- SOLVED: Pass S3 key and display name ---
+                    chunks_added = bp.add_file_to_knowledge_base(
+                        standardized_filename, # The full S3 key
+                        filename,              # The original display name
+                        school_context, 
+                        doc_type
+                    )
+                    
+                    if chunks_added > 0:
                         uploaded_count += 1
+                        total_chunks += chunks_added
                     else:
                         errors.append(filename)
-                        flash(f'❌ Error uploading "{filename}" to S3.', 'danger')
+                        flash(f'❌ File "{filename}" uploaded but failed to be processed (0 chunks created). Check logs.', 'warning')
 
                 except Exception as e:
-                    bp.logger.error(f"Critical error during upload of {filename}: {e}", exc_info=True)
+                    bp.logger.error(f"Critical error during upload/processing of {filename}: {e}", exc_info=True)
                     errors.append(filename)
                     flash(f'An unexpected error occurred with {filename}: {e}', 'danger')
             
         elif file:
             errors.append(file.filename)
-            flash(f'Invalid file type: "{file.filename}". Allowed types are: {", ".join(ALLOWED_EXTENSIONS)}', 'danger')
+            flash(f'Invalid file type: "{file.filename}". Allowed: {", ".join(ALLOWED_EXTENSIONS)}', 'danger')
 
-    # Provide a summary flash message
     if uploaded_count > 0:
-        flash(f'✅ Successfully uploaded {uploaded_count} file(s). Click "Re-build" to apply changes.', 'success')
+        flash(f'✅ Successfully uploaded and added {uploaded_count} file(s) ({total_chunks} chunks) to the knowledge base.', 'success')
     if len(errors) > 0:
-        flash(f'❌ Failed to upload {len(errors)} file(s).', 'danger')
+        flash(f'❌ Failed to upload/process {len(errors)} file(s).', 'danger')
 
     return redirect(url_for('index'))
 
@@ -105,13 +129,13 @@ def upload_file_router():
 @app.route('/rebuild', methods=['POST'])
 def rebuild_knowledge_base_router():
     """
-    Handles the request to rebuild the vector store from all source files.
+    (SLOW) Handles the request to rebuild the vector store from all source files.
+    This is now only needed after deleting files.
     """
     try:
         bp.logger.info("Rebuild request received. Starting...")
-        # 3. REVERTED FIX: Kept your original total_chunks logic, as it's correct
         total_chunks = bp.rebuild_knowledge_base()  
-        flash(f'✅ Knowledge base rebuilt successfully ({total_chunks} chunks).', 'success')
+        flash(f'✅ (SLOW REBUILD) Knowledge base rebuilt successfully ({total_chunks} chunks).', 'success')
     except Exception as e:
         bp.logger.error(f"Critical error during /rebuild route: {e}", exc_info=True)
         flash(f'An unexpected error occurred during rebuild: {e}', 'danger')
@@ -131,7 +155,7 @@ def delete_file_router():
     
     try:
         if bp.delete_source_file(filename):
-            flash(f'✅ File "{filename}" deleted. Click "Re-build" to apply changes.', 'success')
+            flash(f'✅ File "{filename}" deleted from S3. You MUST click "Re-build" to remove it from the chatbot.', 'warning')
         else:
             flash(f'❌ Error deleting "{filename}" from S3.', 'danger')
     except Exception as e:
@@ -144,13 +168,13 @@ def delete_file_router():
 @app.route('/clear', methods=['POST'])
 def clear_knowledge_base_router():
     """
-    Handles the request to delete ALL federated vector stores AND all source files.
+    (DANGEROUS) Handles the request to delete ALL federated vector stores AND all source files.
     """
     try:
         if bp.delete_vector_store():
             flash('✅ Entire knowledge base and all source files cleared successfully.', 'success')
         else:
-            flash('❌ Could not clear knowledge base. Check S3 permissions or server logs.', 'danger')
+            flash('❌ Could not clear knowledge base. Check logs.', 'danger')
     except Exception as e:
         bp.logger.error(f"Critical error during /clear route: {e}", exc_info=True)
         flash(f'An unexpected error occurred: {e}', 'danger')
@@ -158,8 +182,6 @@ def clear_knowledge_base_router():
     return redirect(url_for('index'))
 
 
-# 4. FIX: Use __name__ and __main__ (double underscores)
 if __name__ == '__main__':
-    # Run with Gunicorn in production, not this.
-    port = int(os.environ.get('PORT', 5000)) # Changed to 5000
+    port = int(os.environ.get('PORT', 5000))
     app.run(debug=True, host='0.0.0.0', port=port)

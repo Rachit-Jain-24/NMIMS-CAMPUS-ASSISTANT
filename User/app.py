@@ -34,7 +34,6 @@ BUCKET_NAME = os.getenv("BUCKET_NAME")
 
 if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BUCKET_NAME]):
     logger.critical("Missing AWS config. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BUCKET_NAME in environment/.env")
-    # We don't stop the app, but RAG will fail
     
 # --- Initialize Boto3 Clients ---
 try:
@@ -65,7 +64,6 @@ except Exception as e:
     whisper_model = None
 
 # --- NEW: Initialize the RAGBackend Class ---
-# This single object will hold the LLM, embeddings, and all vector stores.
 try:
     if not all([s3_client, bedrock_client, BUCKET_NAME]):
         raise RuntimeError("AWS clients or bucket name not configured. RAGBackend cannot start.")
@@ -87,8 +85,6 @@ except Exception as e:
 def index():
     """Serves the main page that links to the widget."""
     return render_template('index.html')
-
-# --- REMOVED /widget route ---
 
 # --- Whisper Transcription Endpoint ---
 @app.route('/api/transcribe', methods=['POST'])
@@ -122,7 +118,6 @@ def transcribe_audio():
 # --- Main Chat Endpoint (Updated) ---
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    # Check if the RAG system failed to initialize
     if not rag_system or not rag_system.vector_stores:
         return jsonify({
             'answer': 'Error: The chatbot backend is not initialized. Please check server logs or ask the admin to upload documents.', 
@@ -134,25 +129,48 @@ def chat():
     try:
         data = request.json
         query = data.get('query')
-        language_code = data.get('language', 'en') # Get language
+        language_code = data.get('language', 'en') 
+        
+        # --- ENHANCEMENT: Get chat history from payload ---
+        # We expect history to be a list of dicts: [{'query': '...', 'answer': '...'}]
+        chat_history = data.get('history', []) 
 
         if not query:
             return jsonify({'answer': 'No query provided.', 'sources': [], 'request_id': 'error', 'confidence': 0.0}), 400
 
-        # --- 1. Translation Logic (to English) ---
+        # --- ENHANCEMENT: Translation logic now handles query AND history ---
+        translated_query = query
+        translated_history = []
+
         try:
             if language_code != 'en':
+                # 1. Translate current query
                 translated_query = GoogleTranslator(source='auto', target='en').translate(query)
                 logger.info(f"Translated query ({language_code} -> en): '{query}' -> '{translated_query}'")
+                
+                # 2. Translate history to English for the RAG model
+                for turn in chat_history:
+                    trans_q = GoogleTranslator(source='auto', target='en').translate(turn.get('query', ''))
+                    trans_a = GoogleTranslator(source='auto', target='en').translate(turn.get('answer', ''))
+                    translated_history.append({'query': trans_q, 'answer': trans_a})
+                
+                logger.info(f"Translated {len(translated_history)} history turns to English.")
+            
             else:
+                # If lang is 'en', assume history is already in English
                 translated_query = query
-        except Exception as e:
-            logger.error(f"Translation to English failed: {e}. Using original query.")
-            translated_query = query
+                translated_history = chat_history
         
-        # --- 2. Get RAG Response (from the class) ---
-        # This one call now does: classify -> retrieve -> generate
-        response_data = rag_system.get_rag_response(translated_query)
+        except Exception as e:
+            logger.error(f"Translation failed: {e}. Using original query/history.")
+            translated_query = query
+            translated_history = chat_history # Pass as-is
+        
+        # --- 2. Get RAG Response (pass translated query and history) ---
+        response_data = rag_system.get_rag_response(
+            translated_query, 
+            chat_history=translated_history
+        )
         
         answer_text = response_data.get("answer", "An error occurred.")
         sources = response_data.get("sources", [])
@@ -172,8 +190,8 @@ def chat():
         return jsonify({
             'answer': final_answer,
             'sources': sources,
-            'request_id': f"req_{uuid.uuid4()}", # Generate a unique ID
-            'confidence': 1.0 # Placeholder, as the new RAG doesn't calculate this
+            'request_id': f"req_{uuid.uuid4()}", 
+            'confidence': 1.0 
         })
 
     except Exception as e:

@@ -15,6 +15,7 @@
     /* Style for Flask flash messages */
     .alert-success { background-color: #d4edda; border-color: #c3e6cb; color: #155724; }
     .alert-danger { background-color: #f8d7da; border-color: #f5c6cb; color: #721c24; }
+    .alert-warning { background-color: #fff3cd; border-color: #ffeeba; color: #856404; }
 
     body {
       background-image: url("{{ url_for('static', filename='media/background.jpg') }}");
@@ -45,15 +46,16 @@
   <div id="loading-overlay" 
        class="hidden fixed inset-0 bg-black bg-opacity-75 z-50 flex flex-col items-center justify-center">
     <div class="spinner"></div>
-    <p class="text-white text-lg font-semibold mt-4">Processing... Please wait.</p>
+    <p id="loading-text" class="text-white text-lg font-semibold mt-4">Processing... Please wait.</p>
     <p class="text-gray-300 text-sm">This may take several minutes.</p>
   </div>
+  
   <header class="bg-white bg-opacity-75 shadow-md backdrop-blur-md sticky top-0 z-40">
     <nav class="container mx-auto px-6 py-3 flex justify-between items-center">
       
       <div>
         <a href="{{ url_for('index') }}">
-          <img class="h-12" src="{{ url_for('static', filename='media/logostme.png') }}" alt="STME Logo" onerror="this.onerror=null;this.src='https://placehold.co/150x50/FFFFFF/000000?text=STME+Logo';">
+          <img class="h-12" src="{{ url_for('static', filename='media/logostme.png') }}" alt="STME Logo">
         </a>
       </div>
   
@@ -65,7 +67,7 @@
   
         <div>
           <a href="#">
-            <img class="h-12" src="{{ url_for('static', filename='media/logo.png') }}" alt="NMIMS Logo" onerror="this.onerror=null;this.src='https://placehold.co/150x50/FFFFFF/000000?text=NMIMS+Logo';">
+            <img class="h-12" src="{{ url_for('static', filename='media/logo.png') }}" alt="NMIMS Logo">
           </a>
         </div>
   
@@ -77,7 +79,7 @@
     
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
-        <div class="max-w-6xl mx-auto mb-6">
+        <div class="max-w-6xl mx-auto mb-6 space-y-3">
           {% for category, message in messages %}
             <div class="alert-{{ category }} p-4 rounded-lg shadow-md" role="alert">
               {{ message }}
@@ -91,34 +93,65 @@
       
       <div class="md:col-span-2 space-y-8">
         
-        <form action="{{ url_for('upload_file_router') }}" method="POST" enctype="multipart/form-data" class="w-full bg-white bg-opacity-90 p-8 rounded-xl shadow-lg border border-gray-200">
-          <h2 class="text-3xl font-bold text-gray-900 mb-4">Step 1: Upload Files</h2>
-          <p class="text-gray-600 mb-8">Upload or overwrite source documents. This will not update the live chatbot until you re-build.</p>
+        <form id="upload-form" action="{{ url_for('upload_file_router') }}" method="POST" enctype="multipart/form-data" 
+              class="w-full bg-white bg-opacity-90 p-8 rounded-xl shadow-lg border border-gray-200">
+          
+          <h2 class="text-3xl font-bold text-gray-900 mb-4">Upload & Add Files</h2>
+          <p class="text-gray-600 mb-8">
+            This is the fast path. Files uploaded here are processed and added to the live chatbot immediately.
+          </p>
           
           <div class="mb-6">
             <label for="file" class="block text-sm font-medium text-gray-700 mb-2">Document Uploader</label>
             <input type="file" name="file" id="file" 
                    accept=".pdf,.csv,.xlsx,.docx,.txt,.pptx" 
-                   multiple 
+                   multiple required
                    class="block w-full text-sm text-gray-700 cursor-pointer
                           file:mr-4 file:py-3 file:px-5 file:rounded-lg file:border-0 file:text-sm file:font-semibold
                           file:bg-[#d2232a] file:text-white
                           hover:file:bg-red-700 transition duration-300 ease-in-out
                           bg-gray-50 border border-gray-300 rounded-lg p-2.5">
           </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div>
+              <label for="school_context" class="block text-sm font-medium text-gray-700 mb-2">School Context</label>
+              <select name="school_context" id="school_context" required 
+                      class="block w-full p-3 border border-gray-300 rounded-lg bg-gray-50 text-gray-900 focus:ring-red-500 focus:border-red-500">
+                  <option value="" disabled selected>Select school...</option>
+                  {% for context in school_contexts %}
+                      <option value="{{ context }}">{{ context.upper() }}</option>
+                  {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label for="doc_type" class="block text-sm font-medium text-gray-700 mb-2">Document Type</label>
+              <select name="doc_type" id="doc_type" required
+                      class="block w-full p-3 border border-gray-300 rounded-lg bg-gray-50 text-gray-900 focus:ring-red-500 focus:border-red-500">
+                  <option value="" disabled selected>Select type...</option>
+                  {% for type in doc_types %}
+                      <option value="{{ type }}">{{ type.replace('_', ' ')|title }}</option>
+                  {% endfor %}
+              </select>
+            </div>
+          </div>
           
           <button type="submit" 
                   class="w-full bg-[#d2232a] text-white font-bold py-3 px-10 rounded-lg text-lg 
                          hover:bg-red-700 transition duration-300 ease-in-out 
                          shadow-xl transform hover:scale-105">
-            Upload File(s)
+            Upload & Add File(s)
           </button>
         </form>
 
         <div class="w-full bg-white bg-opacity-90 p-8 rounded-xl shadow-lg border border-gray-200">
-          <h2 class="text-3xl font-bold text-gray-900 mb-4">Current Knowledge Base Files</h2>
+          <div class="flex justify-between items-center mb-6">
+            <h2 class="text-3xl font-bold text-gray-900">Current Knowledge Base Files</h2>
+            <span class="bg-gray-200 text-gray-800 text-lg font-semibold px-4 py-1 rounded-full">{{ files|length }}</span>
+          </div>
           <p class="text-gray-600 mb-6">
-            This is the list of all source files in S3. The chatbot will use these files *after* you click "Re-build".
+            This is the list of all source files in S3. 
+            <strong class="text-red-700">To remove a deleted file, you MUST click "Re-build".</strong>
           </p>
           
           <div class="max-h-96 overflow-y-auto pr-2 space-y-3">
@@ -126,21 +159,22 @@
               {% for file in files %}
                 <div class="flex items-center justify-between bg-gray-50 p-3 rounded-lg border">
                   <div>
-                    <p class="font-semibold text-gray-800">{{ file.key }}</p>
-                    <p class="text-sm text-gray-500">
-                      Size: {{ "%.2f" | format(file.size / 1024) }} KB | 
-                      Uploaded: {{ file.last_modified.strftime('%Y-%m-%d %H:%M') }}
-                    </p>
+                    <p class="font-semibold text-gray-800" title="{{ file.key }}">{{ file.display_name }}</p>
                   </div>
-                  <form action="{{ url_for('delete_file_router') }}" method="POST" 
-                        onsubmit="return confirm('Are you sure you want to delete {{ file.key }}? You must re-build to make this change live.');">
-                    <input type="hidden" name="filename" value="{{ file.key }}">
-                    <button type="submit"
-                            class="bg-red-100 text-red-700 font-medium py-1 px-3 rounded-md
-                                   hover:bg-red-600 hover:text-white transition duration-200">
-                      Delete
-                    </button>
-                  </form>
+                  <div class="flex items-center gap-4">
+                    <p class="text-sm text-gray-500 text-right min-w-[100px]">
+                      {{ "%.1f" | format(file.size / 1024) }} KB
+                    </p>
+                    <form action="{{ url_for('delete_file_router') }}" method="POST" 
+                          onsubmit="return confirm('This only deletes the file from S3. You MUST click \'Re-build\' to remove it from the chatbot. Continue?');">
+                      <input type="hidden" name="filename" value="{{ file.key }}">
+                      <button type="submit"
+                              class="bg-red-100 text-red-700 font-medium py-1 px-3 rounded-md
+                                     hover:bg-red-600 hover:text-white transition duration-200">
+                        Delete
+                      </button>
+                    </form>
+                  </div>
                 </div>
               {% endfor %}
             {% else %}
@@ -148,13 +182,12 @@
             {% endif %}
           </div>
         </div>
-
       </div>
     
       <div class="md:col-span-1 space-y-8">
         
         <div class="bg-white bg-opacity-70 backdrop-blur-sm p-8 rounded-xl shadow-lg border border-gray-200 h-fit">
-          <h2 class="text-2xl font-bold text-gray-800 mb-4">Step 2: Actions</h2>
+          <h2 class="text-2xl font-bold text-gray-800 mb-4">Knowledge Base Actions</h2>
           
           <form id="rebuild-form" action="{{ url_for('rebuild_knowledge_base_router') }}" method="POST" class="mb-4">
             <button type="submit"
@@ -163,7 +196,7 @@
               Re-build Knowledge Base
             </button>
             <p class="text-sm text-gray-600 mt-2 text-center">
-              Click this to publish all changes (uploads/deletions) to the live chatbot.
+              Only use this after <strong class="text-red-700">deleting</strong> files or to fix errors.
             </p>
           </form>
           
@@ -171,10 +204,9 @@
 
           <h3 class="text-lg font-semibold text-gray-700">Dangerous Actions</h3>
           <p class="text-sm text-gray-600 mt-2 mb-3">
-            This will permanently delete all source files and the live knowledge base.
+            This will permanently delete all files and the live knowledge base.
           </p>
-          <form id="clear-form" action="{{ url_for('clear_knowledge_base_router') }}" method="POST" 
-                onsubmit="return confirm('Are you sure you want to permanently delete ALL source files and the entire knowledge base? This action cannot be undone.');">
+          <form id="clear-form" action="{{ url_for('clear_knowledge_base_router') }}" method="POST">
             <button type="submit"
                     class="w-full bg-white text-red-600 border border-red-600 font-bold py-2 px-4 rounded-lg
                            hover:bg-red-600 hover:text-white transition duration-300 ease-in-out">
@@ -185,13 +217,14 @@
 
         <div class="bg-white bg-opacity-70 backdrop-blur-sm p-8 rounded-xl shadow-lg border border-gray-200 h-fit">
           <h2 class="text-2xl font-bold text-gray-800 mb-4">Configuration</h2>
-          <ul class="list-disc list-inside text-gray-600 mt-2 space-y-1">
+          <ul class="text-gray-600 mt-2 space-y-2 text-sm">
+            <li><span class="font-semibold">S3 Bucket:</span> {{ config_info.S3_BUCKET }}</li>
+            <li><span class="font-semibold">Vector Path:</span> {{ config_info.S3_KB_PATH }}</li>
+            <li><span class="font-semibold">Source Path:</span> {{ config_info.S3_SOURCE_PREFIX }}</li>
+            <hr class="my-2">
             <li><span class="font-semibold">Chunk Size:</span> {{ config_info.CHUNK_SIZE }}</li>
             <li><span class="font-semibold">Chunk Overlap:</span> {{ config_info.CHUNK_OVERLAP }}</li>
             <li><span class="font-semibold">Model:</span> {{ config_info.EMBEDDING_MODEL }}</li>
-            <li><span class="font-semibold">S3 Bucket:</span> {{ config_info.S3_BUCKET }}</li>
-            <li><span class="font-semibold">Vector Path:</span> {{ config_info.S3_PATH }}</li>
-            <li><span class="font-semibold">Source Path:</span> {{ config_info.S3_SOURCE_PREFIX }}</li>
           </ul>
         </div>
 
@@ -207,36 +240,51 @@
   </footer>
 
   <script>
-    /* This script dynamically updates the copyright year in the footer. */
     document.addEventListener('DOMContentLoaded', () => {
-        const yearSpan = document.getElementById('copyright-year');
-        if (yearSpan) {
-            yearSpan.textContent = new Date().getFullYear();
-        }
-        
-        // --- NEW: Loading Overlay Script ---
-        const loadingOverlay = document.getElementById('loading-overlay');
-        const rebuildForm = document.getElementById('rebuild-form');
-        const clearForm = document.getElementById('clear-form');
+      const yearSpan = document.getElementById('copyright-year');
+      if (yearSpan) {
+          yearSpan.textContent = new Date().getFullYear();
+      }
+      
+      const loadingOverlay = document.getElementById('loading-overlay');
+      const loadingText = document.getElementById('loading-text');
+      
+      const rebuildForm = document.getElementById('rebuild-form');
+      const clearForm = document.getElementById('clear-form');
+      const uploadForm = document.getElementById('upload-form');
 
-        const showLoading = (event) => {
-            // Check if the 'onsubmit' confirmation was cancelled
-            // The 'onsubmit' runs before this listener. If it returns false, the submit event is cancelled.
-            // We can't *directly* check the confirm() result, but if the form *is* submitting, we show the overlay.
-            loadingOverlay.classList.remove('hidden');
-        };
+      const showLoading = (text = "Processing... Please wait.") => {
+          loadingText.textContent = text;
+          loadingOverlay.classList.remove('hidden');
+      };
+      
+      if (uploadForm) {
+          uploadForm.addEventListener('submit', (event) => {
+              showLoading("Uploading & processing file(s)...");
+          });
+      }
 
-        if (rebuildForm) {
-            rebuildForm.addEventListener('submit', showLoading);
-        }
-        
-        if (clearForm) {
-            clearForm.addEventListener('submit', (event) => {
-                // The 'onsubmit' attribute handles the confirm dialog
-                // If the user clicks 'OK', the form will submit and this listener will fire.
-                showLoading(event);
-            });
-        }
+      if (rebuildForm) {
+          rebuildForm.addEventListener('submit', (event) => {
+              const isConfirmed = confirm('Re-building is SLOW and only needed after DELETING files. Are you sure?');
+              if (isConfirmed) {
+                  showLoading("Re-building... This may take several minutes.");
+              } else {
+                  event.preventDefault();
+              }
+          });
+      }
+      
+      if (clearForm) {
+          clearForm.addEventListener('submit', (event) => {
+               const isConfirmed = confirm('Are you sure you want to permanently delete ALL source files and the entire knowledge base? This action cannot be undone.');
+              if (isConfirmed) {
+                  showLoading("Clearing entire knowledge base...");
+              } else {
+                  event.preventDefault();
+              }
+          });
+      }
     });
   </script>
   </body>
