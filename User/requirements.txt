@@ -1,0 +1,9 @@
+Flask
+gunicorn
+langchain
+langchain-community
+langchain-aws==1.0.0
+faiss-cpu
+boto3
+python-dotenv==1.0.1
+Flask-Cors
