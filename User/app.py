@@ -70,7 +70,7 @@ def chat():
             'answer': formatted_answer, 
             'sources': sources,
             'request_id': req_id,
-            'confidence': confidence
+            'confidence': float(confidence) # <-- FIX: Cast to standard Python float
         })
 
     except Exception as e:

@@ -1,118 +1,135 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NMIMS Campus Assistant - User Interface</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+    
+    <!-- Load Inter font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- 
+      Tailwind.config script MUST come BEFORE loading the main Tailwind script.
+    -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'nmims-red': '#D2232A',
+                        'nmims-red-dark': '#a81c22',
+                    }
+                }
+            }
         }
+    </script>
+
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style type="text/tailwindcss">
+        /* Set the background image using url_for to get the correct path */
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .container {
-            background: white;
-            border-radius: 20px;
-            padding: 60px;
-            max-width: 800px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            text-align: center;
-        }
-        h1 {
-            color: #D2232A;
-            font-size: 2.5em;
-            margin-bottom: 10px;
-        }
-        .tagline {
-            color: #666;
-            font-size: 1.2em;
-            margin-bottom: 40px;
-        }
-        .button {
-            display: inline-block;
-            background: #D2232A;
-            color: white;
-            padding: 18px 40px;
-            border-radius: 50px;
-            text-decoration: none;
-            font-size: 1.2em;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(210, 35, 42, 0.4);
-        }
-        .button:hover {
-            background: #a81c22;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(210, 35, 42, 0.6);
-        }
-        .info {
-            margin-top: 40px;
-            padding: 30px;
-            background: #f8f9fa;
-            border-radius: 12px;
-            text-align: left;
-        }
-        .info h2 {
-            color: #D2232A;
-            font-size: 1.5em;
-            margin-bottom: 20px;
-        }
-        .info ul {
-            list-style: none;
-            padding: 0;
-        }
-        .info li {
-            padding: 10px 0;
-            border-bottom: 1px solid #e0e0e0;
-            color: #333;
-        }
-        .info li:last-child {
-            border-bottom: none;
-        }
-        .check {
-            color: #28a745;
-            margin-right: 10px;
-        }
-        .note {
-            background: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 15px;
-            margin-top: 20px;
-            border-radius: 4px;
-            color: #856404;
+            /* This requires 'background.jpg' to be in 'User/static/media/' 
+            */
+            background-image: url("{{ url_for('static', filename='media/background.jpg') }}");
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+            font-family: 'Inter', sans-serif;
         }
     </style>
 </head>
-<body>
-    <div class="container">
-        <h1>🎓 NMIMS Campus Assistant</h1>
-        <p class="tagline">Your Smart Companion for All Campus Queries</p>
-        
-        <a href="{{ url_for('chat_widget') }}" class="button">
-            Open Chat Widget →
-        </a>
-        
-        <div class="info">
-            <h2>📋 Before You Start</h2>
-            <ul>
-                <li><span class="check">✓</span> Make sure this server (User Portal) is running.</li>
-                <li><span class="check">✓</span> Upload documents via Admin Portal (running on port 8085).</li>
-                <li><span class="check">✓</span> Then click the button above to chat!</li>
-            </ul>
+<body class="flex flex-col min-h-screen text-gray-800">
+
+    <!-- Header -->
+    <header class="bg-white bg-opacity-75 shadow-md backdrop-blur-md sticky top-0 z-40">
+        <nav class="container mx-auto px-6 py-3 flex justify-between items-center">
             
-            <div class="note">
-                <strong>ℹ️ Note:</strong> This page is just a launcher. The button opens the chat widget.
+            <!-- NMIMS Logo -->
+            <div>
+                <a href="{{ url_for('index') }}" class="flex items-center gap-2">
+                    <!-- Requires 'logo.png' to be in 'User/static/media/' -->
+                    <img class="h-12" src="{{ url_for('static', filename='media/logo.png') }}" alt="NMIMS Logo" onerror="this.onerror=null;this.src='https://placehold.co/150x50/FFFFFF/000000?text=NMIMS+Logo';">
+                </a>
+            </div>
+      
+            <!-- Portal Title & STME Logo -->
+            <div class="flex items-center gap-4 sm:gap-6">
+                <!-- User Portal Button (Uses nmims-red) -->
+                <span class="bg-nmims-red text-white font-bold py-2 px-4 rounded-lg shadow-lg text-sm sm:text-base">
+                    User Portal
+                </span>
+                
+                <!-- 
+                  STME Logo (Requires 'logostme.png' to be in 'User/static/media/')
+                -->
+                <img class="h-12 hidden sm:block" src="{{ url_for('static', filename='media/logostme.png') }}" alt="STME Logo" onerror="this.onerror=null;this.src='https://placehold.co/200x50/FFFFFF/000000?text=STME+Logo';">
+            </div>
+        </nav>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow container mx-auto px-4 py-12 flex items-center justify-center">
+        <div class="w-full max-w-2xl">
+            <div class="bg-white bg-opacity-90 p-8 sm:p-12 rounded-xl shadow-xl border border-gray-200 text-center">
+                
+                <h1 class="text-3xl sm:text-4xl font-bold text-gray-900 mb-3">🎓 NMIMS Campus Assistant</h1>
+                <p class="text-lg sm:text-xl text-gray-600 mb-8">Your Smart Companion for All Campus Queries</p>
+                
+                <!-- Open Chat Widget Button (Uses nmims-red) -->
+                <a href="{{ url_for('chat_widget') }}" 
+                   class="inline-block bg-nmims-red text-white font-bold py-4 px-10 rounded-lg text-lg 
+                          hover:bg-nmims-red-dark transition duration-300 ease-in-out 
+                          shadow-xl transform hover:scale-105">
+                    Open Chat Widget →
+                </a>
+                
+                <!-- Info Box -->
+                <div class="info mt-10 p-6 bg-gray-50 border border-gray-200 rounded-lg text-left space-y-3">
+                    <h2 class="text-xl font-semibold text-nmims-red mb-3">📋 How to Use</h2>
+                    <ul class="list-none space-y-2">
+                        <li class="flex items-start gap-2">
+                            <span class="text-green-500 font-bold mt-1">✓</span>
+                            <span>Click the "Open Chat Widget" button to start a conversation.</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-green-500 font-bold mt-1">✓</span>
+                            <span>Ask questions about academic calendars, policies, library books, and more.</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-green-500 font-bold mt-1">✓</span>
+                            <span>The assistant has all the information from the official Student Resource Books (SRBs).</span>
+                        </li>
+                    </ul>
+                    
+                    <div class="note bg-yellow-100 border-l-4 border-yellow-400 text-yellow-800 p-4 rounded-md mt-4">
+                        <strong>ℹ️ Note:</strong> This page is the launcher for the chat assistant. The main chat interface will open in a new view.
+                    </div>
+                </div>
+
             </div>
         </div>
-    </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white bg-opacity-90 text-gray-800 text-center p-4 backdrop-blur-md mt-auto shadow-inner">
+        <div class="container mx-auto">
+            <p>&copy; <span id="copyright-year"></span> Campus Assitant Team, STME NMIMS Hyderabad. All Rights Reserved.</p>
+        </div>
+    </footer>
+
+    <script>
+        /* This script dynamically updates the copyright year in the footer. */
+        document.addEventListener('DOMContentLoaded', () => {
+            const yearSpan = document.getElementById('copyright-year');
+            if (yearSpan) {
+                yearSpan.textContent = new Date().getFullYear();
+            }
+        });
+    </script>
 </body>
 </html>

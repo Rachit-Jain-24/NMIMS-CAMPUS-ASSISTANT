@@ -1,704 +1,151 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NMIMS Campus Assistant - Your Smart Companion for All Campus Queries</title>
+    <title>NMIMS Campus Assistant</title>
+    
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Load Inter font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     
     <style>
-        /* ========================================
-           CSS VARIABLES & THEMING
-           ======================================== */
-        :root {
-            --nmims-primary: #D2232A;
-            --nmims-primary-dark: #a81c22;
-            --nmims-primary-light: #e63946;
-            --text-primary: #1a1a1a;
-            --text-secondary: #666666;
-            --bg-white: #ffffff;
-            --bg-light: #f5f5f5;
-            --bg-user: #e3f2fd;
-            --bg-bot: #f5f5f5;
-            --border-color: #e0e0e0;
-            --shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            --shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.15);
-            --transition: all 0.3s ease;
-        }
-        /* ... (all your other CSS from the file) ... */
-        /* ========================================
-           RESET & BASE STYLES
-           ======================================== */
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        /* Base styles */
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            font-size: 16px;
-            line-height: 1.5;
-            color: var(--text-primary);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            /* Use Flask's url_for to get the correct static path for the background image */
+            background-image: url("{{ url_for('static', filename='media/background.jpg') }}");
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
         }
 
-        /* ========================================
-           FLOATING BUTTON
-           ======================================== */
-        .nmims-chat-button {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            width: 60px;
-            height: 60px;
+        /* Custom scrollbar for the chat messages area */
+        #nmims-chat-messages::-webkit-scrollbar {
+            width: 6px;
+        }
+        #nmims-chat-messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        #nmims-chat-messages::-webkit-scrollbar-thumb {
+            background: #D2232A; /* NMIMS Red */
+            border-radius: 10px;
+        }
+        #nmims-chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #a81c22; /* Darker NMIMS Red */
+        }
+
+        /* Simple spinner for loading overlay (if you add one) */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
             border-radius: 50%;
-            background-color: var(--nmims-primary);
-            box-shadow: var(--shadow-lg);
-            cursor: pointer;
-            border: none;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: var(--transition);
-            z-index: 9998;
-        }
-
-        .nmims-chat-button:hover {
-            background-color: var(--nmims-primary-dark);
-            transform: scale(1.05);
-        }
-
-        .nmims-chat-button:focus {
-            outline: 3px solid #2196F3;
-            outline-offset: 2px;
-        }
-
-        .nmims-chat-button img {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            object-fit: cover;
-        }
-
-        .nmims-chat-button-icon {
-            width: 32px;
-            height: 32px;
-            fill: white;
-        }
-
-        /* ========================================
-           MODAL OVERLAY & CONTAINER
-           ======================================== */
-        .nmims-chat-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.5);
-            z-index: 9999;
-            display: none;
-            align-items: center;
-            justify-content: center;
-            animation: fadeIn 0.3s ease;
-        }
-
-        .nmims-chat-overlay[aria-hidden="false"] {
-            display: flex;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        .nmims-chat-modal {
-            background: var(--bg-white);
-            border-radius: 12px;
-            width: 90%;
-            max-width: 500px;
-            max-height: 90vh;
-            display: flex;
-            flex-direction: column;
-            box-shadow: var(--shadow-lg);
-            animation: slideUp 0.3s ease;
-        }
-
-        @keyframes slideUp {
-            from { transform: translateY(20px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-        }
-
-        /* ========================================
-           MODAL HEADER
-           ======================================== */
-        .nmims-chat-header {
-            background: linear-gradient(135deg, var(--nmims-primary) 0%, var(--nmims-primary-dark) 100%);
-            color: white;
-            padding: 16px 20px;
-            border-radius: 12px 12px 0 0;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .nmims-chat-header-content {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .nmims-chat-header img {
+            border-top: 4px solid #fff;
             width: 40px;
             height: 40px;
-            border-radius: 50%;
-            object-fit: cover;
-            background: white;
-            padding: 4px;
+            animation: spin 1s linear infinite;
         }
-
-        .nmims-chat-title {
-            font-size: 18px;
-            font-weight: 600;
-        }
-
-        .nmims-chat-subtitle {
-            font-size: 13px;
-            opacity: 0.9;
-        }
-
-        .nmims-chat-close {
-            background: transparent;
-            border: none;
-            color: white;
-            font-size: 28px;
-            cursor: pointer;
-            width: 32px;
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 4px;
-            transition: var(--transition);
-        }
-
-        .nmims-chat-close:hover {
-            background: rgba(255, 255, 255, 0.2);
-        }
-
-        .nmims-chat-close:focus {
-            outline: 2px solid white;
-            outline-offset: 2px;
-        }
-
-        /* ========================================
-           MESSAGES AREA
-           ======================================== */
-        .nmims-chat-messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 20px;
-            max-height: 70vh;
-            min-height: 300px;
-            background: var(--bg-light);
-        }
-
-        .nmims-message {
-            margin-bottom: 16px;
-            display: flex;
-            flex-direction: column;
-            animation: messageSlide 0.3s ease;
-        }
-
-        @keyframes messageSlide {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .nmims-message-user {
-            align-items: flex-end;
-        }
-
-        .nmims-message-bot {
-            align-items: flex-start;
-        }
-
-        .nmims-message-bubble {
-            max-width: 80%;
-            padding: 12px 16px;
-            border-radius: 18px;
-            word-wrap: break-word;
-            font-size: 14px;
-            line-height: 1.4;
-        }
-
-        .nmims-message-user .nmims-message-bubble {
-            background: var(--nmims-primary);
-            color: white;
-            border-bottom-right-radius: 4px;
-        }
-
-        .nmims-message-bot .nmims-message-bubble {
-            background: var(--bg-white);
-            color: var(--text-primary);
-            border-bottom-left-radius: 4px;
-            border: 1px solid var(--border-color);
-        }
-        
-        /* This ensures markdown-style lists from the AI are rendered correctly */
-        .nmims-message-bot .nmims-message-bubble ul,
-        .nmims-message-bot .nmims-message-bubble ol {
-            padding-left: 20px;
-            margin-top: 8px;
-            margin-bottom: 8px;
-        }
-        
-        .nmims-message-time {
-            font-size: 11px;
-            color: var(--text-secondary);
-            margin-top: 4px;
-            padding: 0 8px;
-        }
-
-        /* ========================================
-           TYPING INDICATOR
-           ======================================== */
-        .nmims-typing {
-            display: flex;
-            gap: 4px;
-            padding: 12px 16px;
-        }
-
-        .nmims-typing-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--text-secondary);
-            animation: typingBounce 1.4s infinite;
-        }
-
-        .nmims-typing-dot:nth-child(2) { animation-delay: 0.2s; }
-        .nmims-typing-dot:nth-child(3) { animation-delay: 0.4s; }
-
-        @keyframes typingBounce {
-            0%, 60%, 100% { transform: translateY(0); }
-            30% { transform: translateY(-10px); }
-        }
-
-        /* ========================================
-           CONFIDENCE BADGE
-           ======================================== */
-        .nmims-confidence-badge {
-            display: inline-block;
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 600;
-            margin-top: 8px;
-            background: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeaa7;
-        }
-
-        /* ========================================
-           SOURCES
-           ======================================== */
-        .nmims-sources {
-            margin-top: 12px;
-            padding-top: 12px;
-            border-top: 1px solid var(--border-color);
-        }
-
-        .nmims-sources-title {
-            font-size: 12px;
-            font-weight: 600;
-            color: var(--text-secondary);
-            margin-bottom: 8px;
-        }
-
-        .nmims-source-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px;
-            background: var(--bg-light);
-            border-radius: 6px;
-            margin-bottom: 6px;
-            font-size: 12px;
-        }
-
-        .nmims-source-info {
-            flex: 1;
-            color: var(--text-secondary);
-            /* Truncate long filenames */
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            padding-right: 10px;
-        }
-
-        .nmims-source-button {
-            background: var(--nmims-primary);
-            color: white;
-            border: none;
-            padding: 4px 12px;
-            border-radius: 4px;
-            font-size: 11px;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .nmims-source-button:hover {
-            background: var(--nmims-primary-dark);
-        }
-
-        .nmims-source-button:focus {
-            outline: 2px solid var(--nmims-primary-light);
-            outline-offset: 2px;
-        }
-
-        /* ========================================
-           FEEDBACK
-           ======================================== */
-        .nmims-feedback {
-            margin-top: 8px;
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-
-        .nmims-feedback-button {
-            background: transparent;
-            border: 1px solid var(--border-color);
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: var(--transition);
-            font-size: 16px;
-        }
-
-        .nmims-feedback-button:hover {
-            background: var(--bg-light);
-            border-color: var(--nmims-primary);
-        }
-
-        .nmims-feedback-button.active {
-            background: var(--nmims-primary);
-            color: white;
-            border-color: var(--nmims-primary);
-        }
-
-        .nmims-feedback-comment {
-            width: 100%;
-            margin-top: 8px;
-            padding: 8px;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            font-size: 13px;
-            font-family: inherit;
-            resize: vertical;
-            min-height: 60px;
-        }
-
-        .nmims-feedback-submit {
-            margin-top: 6px;
-            background: var(--nmims-primary);
-            color: white;
-            border: none;
-            padding: 6px 16px;
-            border-radius: 4px;
-            font-size: 12px;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .nmims-feedback-submit:hover {
-            background: var(--nmims-primary-dark);
-        }
-
-        /* ========================================
-           ERROR MESSAGE
-           ======================================== */
-        .nmims-error {
-            background: #fee;
-            color: #c00;
-            padding: 12px;
-            border-radius: 8px;
-            border: 1px solid #fcc;
-            font-size: 13px;
-            margin-top: 8px;
-        }
-
-        .nmims-retry-button {
-            margin-top: 8px;
-            background: var(--nmims-primary);
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
-            font-size: 13px;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .nmims-retry-button:hover {
-            background: var(--nmims-primary-dark);
-        }
-
-        /* ========================================
-           QUICK REPLIES
-           ======================================== */
-        .nmims-quick-replies {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 12px;
-        }
-
-        .nmims-quick-reply {
-            background: white;
-            border: 1px solid var(--nmims-primary);
-            color: var(--nmims-primary);
-            padding: 8px 14px;
-            border-radius: 20px;
-            font-size: 13px;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .nmims-quick-reply:hover {
-            background: var(--nmims-primary);
-            color: white;
-        }
-
-        .nmims-quick-reply:focus {
-            outline: 2px solid var(--nmims-primary-light);
-            outline-offset: 2px;
-        }
-
-        /* ========================================
-           INPUT AREA
-           ======================================== */
-        .nmims-chat-input-area {
-            padding: 16px 20px;
-            background: white;
-            border-top: 1px solid var(--border-color);
-            border-radius: 0 0 12px 12px;
-        }
-
-        .nmims-chat-input-container {
-            display: flex;
-            gap: 8px;
-            align-items: flex-end;
-        }
-
-        .nmims-chat-input {
-            flex: 1;
-            border: 1px solid var(--border-color);
-            border-radius: 20px;
-            padding: 10px 16px;
-            font-size: 14px;
-            font-family: inherit;
-            resize: none;
-            max-height: 100px;
-            min-height: 40px;
-        }
-
-        .nmims-chat-input:focus {
-            outline: 2px solid var(--nmims-primary);
-            outline-offset: 0;
-            border-color: var(--nmims-primary);
-        }
-
-        .nmims-chat-send {
-            background: var(--nmims-primary);
-            color: white;
-            border: none;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: var(--transition);
-            flex-shrink: 0;
-        }
-
-        .nmims-chat-send:hover:not(:disabled) {
-            background: var(--nmims-primary-dark);
-            transform: scale(1.05);
-        }
-
-        .nmims-chat-send:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .nmims-chat-send:focus {
-            outline: 2px solid var(--nmims-primary-light);
-            outline-offset: 2px;
-        }
-
-        /* ========================================
-           SOURCE VIEWER OVERLAY
-           ======================================== */
-        .nmims-source-viewer {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.7);
-            z-index: 10000;
-            display: none;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .nmims-source-viewer[aria-hidden="false"] {
-            display: flex;
-        }
-
-        .nmims-source-viewer-content {
-            background: white;
-            padding: 24px;
-            border-radius: 8px;
-            max-width: 80%;
-            max-height: 80%;
-            overflow-y: auto;
-            position: relative;
-        }
-
-        .nmims-source-viewer-close {
-            position: absolute;
-            top: 12px;
-            right: 12px;
-            background: var(--nmims-primary);
-            color: white;
-            border: none;
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            cursor: pointer;
-            font-size: 18px;
-        }
-
-        /* ========================================
-           OFFLINE BANNER
-           ======================================== */
-        .nmims-offline-banner {
-            background: #ff9800;
-            color: white;
-            padding: 12px 20px;
-            text-align: center;
-            font-size: 13px;
-        }
-
-        .nmims-mailto-link {
-            color: white;
-            text-decoration: underline;
-            font-weight: 600;
-        }
-
-        /* ========================================
-           ACCESSIBILITY & UTILITIES
-           ======================================== */
-        .sr-only {
-            position: absolute;
-            width: 1px;
-            height: 1px;
-            padding: 0;
-            margin: -1px;
-            overflow: hidden;
-            clip: rect(0, 0, 0, 0);
-            white-space: nowrap;
-            border-width: 0;
-        }
-
-        /* ========================================
-           RESPONSIVE
-           ======================================== */
-        @media (max-width: 600px) {
-            .nmims-chat-modal {
-                width: 100%;
-                height: 100%;
-                max-height: 100vh;
-                border-radius: 0;
-            }
-
-            .nmims-chat-header {
-                border-radius: 0;
-            }
-
-            .nmims-chat-input-area {
-                border-radius: 0;
-            }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
-<body>
+<body class="h-full">
 
+    <!-- 
+      ========================================
+      FLOATING CHAT BUTTON
+      ======================================== 
+    -->
     <button 
         id="nmims-chat-button" 
-        class="nmims-chat-button" 
+        class="fixed bottom-5 right-5 w-16 h-16 bg-[#D2232A] rounded-full shadow-lg flex items-center justify-center text-white cursor-pointer transform transition-all duration-300 hover:scale-105 hover:bg-[#a81c22] focus:outline-none focus:ring-4 focus:ring-red-300" 
         role="button" 
         tabindex="0"
         aria-label="Open NMIMS help chat"
     >
-        <img id="nmims-button-logo" src="" alt="" style="display: none;" />
-        <svg class="nmims-chat-button-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <!-- Icon: Chat bubble -->
+        <svg id="nmims-button-icon" class="w-8 h-8" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
             <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
         </svg>
+        <!-- Logo (hidden by default, shown by JS) -->
+        <img id="nmims-button-logo" src="" alt="Chat" class="w-10 h-10 rounded-full object-cover hidden" />
     </button>
 
+    <!-- 
+      ========================================
+      CHAT MODAL OVERLAY
+      ======================================== 
+    -->
     <div 
         id="nmims-chat-overlay" 
-        class="nmims-chat-overlay" 
+        class="fixed inset-0 bg-black bg-opacity-50 z-40 items-center justify-center hidden" 
         role="dialog" 
         aria-modal="true" 
         aria-hidden="true"
         aria-labelledby="nmims-chat-title"
     >
-        <div class="nmims-chat-modal">
-            <div class="nmims-chat-header">
-                <div class="nmims-chat-header-content">
-                    <img id="nmims-header-logo" src="" alt="NMIMS Logo" />
+        <!-- Chat Modal -->
+        <div class="nmims-chat-modal flex flex-col w-full h-full sm:w-[500px] sm:h-auto sm:max-h-[90vh] bg-white sm:rounded-xl shadow-2xl overflow-hidden animate-slide-up">
+            
+            <!-- 
+              ========================================
+              MODAL HEADER
+              ======================================== 
+            -->
+            <div class="nmims-chat-header flex items-center justify-between p-4 bg-[#D2232A] text-white flex-shrink-0">
+                <div class="flex items-center gap-3">
+                    <img id="nmims-header-logo" src="" alt="NMIMS Logo" class="w-10 h-10 rounded-full bg-white p-1" />
                     <div>
-                        <div id="nmims-chat-title" class="nmims-chat-title">NMIMS Campus Assistant</div>
-                        <div class="nmims-chat-subtitle">Your Smart Companion for All Campus Queries</div>
+                        <div id="nmims-chat-title" class="font-bold text-lg leading-tight">NMIMS Campus Assistant</div>
+                        <div class="text-sm text-red-100 leading-tight">Your Smart Companion</div>
                     </div>
                 </div>
                 <button 
                     id="nmims-chat-close" 
-                    class="nmims-chat-close" 
+                    class="nmims-chat-close text-3xl text-red-200 hover:text-white transition-colors" 
                     aria-label="Close chat"
                 >
                     &times;
                 </button>
             </div>
 
-            <div id="nmims-chat-messages" class="nmims-chat-messages" role="log" aria-live="polite">
-                </div>
+            <!-- 
+              ========================================
+              MESSAGES AREA
+              ======================================== 
+            -->
+            <div id="nmims-chat-messages" class="nmims-chat-messages flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50 min-h-[300px]">
+                <!-- Messages will be dynamically injected here by JavaScript -->
+            </div>
 
-            <div class="nmims-chat-input-area">
-                <div class="nmims-chat-input-container">
+            <!-- 
+              ========================================
+              INPUT AREA
+              ======================================== 
+            -->
+            <div class="nmims-chat-input-area p-4 bg-white border-t border-gray-200">
+                <div class="nmims-chat-input-container flex items-end gap-3">
                     <textarea 
                         id="nmims-chat-input" 
-                        class="nmims-chat-input"
+                        class="nmims-chat-input flex-1 p-3 border border-gray-300 rounded-2xl resize-none outline-none focus:ring-2 focus:ring-[#D2232A] focus:border-transparent transition-all"
                         placeholder="Ask me anything about campus..."
                         rows="1"
                         aria-label="Message input"
                     ></textarea>
                     <button 
                         id="nmims-chat-send" 
-                        class="nmims-chat-send"
+                        class="nmims-chat-send w-11 h-11 bg-[#D2232A] text-white rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300 hover:bg-[#a81c22] disabled:opacity-50 disabled:cursor-not-allowed"
                         aria-label="Send message"
                     >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <!-- Send Icon -->
+                        <svg class="w-5 h-5" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
                         </svg>
                     </button>
@@ -707,26 +154,37 @@
         </div>
     </div>
 
-    <div id="nmims-source-viewer" class="nmims-source-viewer" aria-hidden="true">
-        <div class="nmims-source-viewer-content">
-            <button class="nmims-source-viewer-close" aria-label="Close source viewer">&times;</button>
-            <div id="nmims-source-viewer-body"></div>
+    <!-- 
+      ========================================
+      SOURCE VIEWER OVERLAY
+      ======================================== 
+    -->
+    <div id="nmims-source-viewer" class="nmims-source-viewer fixed inset-0 bg-black bg-opacity-70 z-50 items-center justify-center p-4 hidden" aria-hidden="true">
+        <div class="nmims-source-viewer-content bg-white p-6 rounded-lg max-w-3xl w-full max-h-[80vh] overflow-y-auto relative">
+            <button class="nmims-source-viewer-close absolute top-3 right-3 w-8 h-8 bg-[#D2232A] text-white rounded-full text-lg font-bold flex items-center justify-center" aria-label="Close source viewer">&times;</button>
+            <div id="nmims-source-viewer-body" class="mt-4 pr-4">
+                <!-- Source content will be injected here -->
+            </div>
         </div>
     </div>
 
+    <!-- 
+      ========================================
+      JAVASCRIPT LOGIC
+      (Copied from your previous file, with updated CONFIG)
+      ======================================== 
+    -->
     <script>
         // ========================================
         // CONFIGURATION
         // ========================================
         const CONFIG = {
-            // *** UPDATED: Point to Flask API (default port 8086) ***
             apiBase: 'http://localhost:8086/api',
             sessionId: 'hack-demo',
             authToken: null,
             // *** UPDATED: Use Flask's url_for for static assets ***
             logoSmall: "{{ url_for('static', filename='media/logo.png') }}",
             logoLarge: "{{ url_for('static', filename='media/logo.png') }}",
-            // *** UPDATED: Set mockMode to false ***
             mockMode: false,
             quickReplies: [
                 "What are the key academic calendar deadlines?",
@@ -755,6 +213,7 @@
         const elements = {
             button: document.getElementById('nmims-chat-button'),
             buttonLogo: document.getElementById('nmims-button-logo'),
+            buttonIcon: document.getElementById('nmims-button-icon'),
             overlay: document.getElementById('nmims-chat-overlay'),
             modal: document.querySelector('.nmims-chat-modal'),
             headerLogo: document.getElementById('nmims-header-logo'),
@@ -770,7 +229,7 @@
         // INITIALIZATION
         // ========================================
         function init() {
-            loadLogo(elements.buttonLogo, CONFIG.logoSmall);
+            loadLogo(elements.buttonLogo, CONFIG.logoSmall, elements.buttonIcon);
             loadLogo(elements.headerLogo, CONFIG.logoLarge);
             loadChatHistory();
 
@@ -797,18 +256,21 @@
         // ========================================
         // LOGO HANDLING
         // ========================================
-        function loadLogo(imgElement, src) {
-            if (!src) return; // Don't try to load if path is empty
+        function loadLogo(imgElement, src, iconElement = null) {
+            if (!src) return; 
             imgElement.src = src;
             imgElement.onload = () => {
                 imgElement.style.display = 'block';
-                if (imgElement === elements.buttonLogo) {
-                    document.querySelector('.nmims-chat-button-icon').style.display = 'none';
+                if (iconElement) {
+                    iconElement.style.display = 'none';
                 }
             };
             imgElement.onerror = () => {
                 console.warn('[NMIMS Chat] Logo not found:', src);
                 imgElement.style.display = 'none';
+                if (iconElement) {
+                    iconElement.style.display = 'block';
+                }
             };
         }
 
@@ -817,6 +279,8 @@
         // ========================================
         function openModal() {
             state.isOpen = true;
+            elements.overlay.classList.remove('hidden');
+            elements.overlay.classList.add('flex');
             elements.overlay.setAttribute('aria-hidden', 'false');
             elements.input.focus();
             setupFocusTrap();
@@ -825,6 +289,8 @@
 
         function closeModal() {
             state.isOpen = false;
+            elements.overlay.classList.add('hidden');
+            elements.overlay.classList.remove('flex');
             elements.overlay.setAttribute('aria-hidden', 'true');
             elements.button.focus();
             removeFocusTrap();
@@ -865,7 +331,7 @@
 
             const focusableElements = Array.from(elements.modal.querySelectorAll(
                 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-            )).filter(el => el.offsetParent !== null); // Filter out hidden elements
+            )).filter(el => el.offsetParent !== null); 
 
             if (focusableElements.length === 0) return;
 
@@ -902,11 +368,11 @@
 
         function renderQuickReplies() {
             const container = document.createElement('div');
-            container.className = 'nmims-quick-replies';
+            container.className = 'nmims-quick-replies flex flex-wrap gap-2 mt-3';
             
             CONFIG.quickReplies.forEach(reply => {
                 const btn = document.createElement('button');
-                btn.className = 'nmims-quick-reply';
+                btn.className = 'nmims-quick-reply bg-white border border-[#D2232A] text-[#D2232A] py-2 px-4 rounded-full text-sm cursor-pointer transition-all duration-200 hover:bg-[#D2232A] hover:text-white focus:outline-none focus:ring-2 focus:ring-red-300';
                 btn.textContent = reply;
                 btn.setAttribute('tabindex', '0');
                 btn.addEventListener('click', () => handleQuickReply(reply));
@@ -926,11 +392,9 @@
             sendMessage();
             console.log('[NMIMS Chat] Quick reply sent:', text);
             
-            // Remove quick replies after one is clicked
             const quickReplies = elements.messagesContainer.querySelector('.nmims-quick-replies');
             if (quickReplies) {
                 quickReplies.remove();
-                // Update state and session storage
                 const lastMsg = state.messages[state.messages.length - 1];
                 if (lastMsg && lastMsg.showQuickReplies) {
                     lastMsg.showQuickReplies = false;
@@ -949,7 +413,6 @@
                 const msgElement = createMessageElement(msg);
                 elements.messagesContainer.appendChild(msgElement);
 
-                // Add quick replies if it's the last message and they should be shown
                 if (index === state.messages.length - 1 && msg.showQuickReplies) {
                     elements.messagesContainer.appendChild(renderQuickReplies());
                 }
@@ -959,6 +422,7 @@
         }
         
         function escapeHTML(str) {
+            if (typeof str !== 'string') return '';
             return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
         }
 
@@ -966,46 +430,59 @@
             let html = escapeHTML(text);
             // Bold: **text**
             html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            // Lists (simple): - item or * item
-            html = html.replace(/^\s*[\-\*]\s+(.*)$/gm, '<ul><li>$1</li></ul>');
-            // Consolidate adjacent lists
-            html = html.replace(/<\/ul>\s*<ul>/g, '');
+            // Lists: - item or * item
+            html = html.replace(/^\s*[\-\*]\s+(.*)$/gm, '<ul class="list-disc list-outside pl-5"><li>$1</li></ul>');
+            html = html.replace(/<\/ul>\s*<ul class="list-disc list-outside pl-5">/g, '');
             // Numbered lists: 1. item
-            html = html.replace(/^\s*\d+\.\s+(.*)$/gm, '<ol><li>$1</li></ol>');
-            // Consolidate adjacent numbered lists
-            html = html.replace(/<\/ol>\s*<ol>/g, '');
+            html = html.replace(/^\s*\d+\.\s+(.*)$/gm, '<ol class="list-decimal list-outside pl-5"><li>$1</li></ol>');
+            html = html.replace(/<\/ol>\s*<ol class="list-decimal list-outside pl-5">/g, '');
             // Citations: [Page X]
-            html = html.replace(/\[(Page\s\d+)\]/g, '<span style="font-size: 0.8em; color: var(--text-secondary); margin-left: 4px;">[$1]</span>');
+            html = html.replace(/\[(Page\s\d+)\]/g, '<span class="text-xs text-gray-500 ml-1">[$1]</span>');
+            // Newlines
+            html = html.replace(/\n/g, '<br>');
             return html;
         }
 
         function createMessageElement(msg) {
             const messageDiv = document.createElement('div');
-            messageDiv.className = `nmims-message nmims-message-${msg.type}`;
+            messageDiv.className = `nmims-message flex flex-col animate-fade-in ${msg.type === 'user' ? 'items-end' : 'items-start'}`;
 
             const bubble = document.createElement('div');
-            bubble.className = 'nmims-message-bubble';
+            bubble.className = 'nmims-message-bubble max-w-[85%] sm:max-w-[80%] py-2.5 px-4 rounded-2xl text-sm leading-relaxed';
 
             if (msg.type === 'typing') {
-                bubble.innerHTML = '<div class="nmims-typing"><div class="nmims-typing-dot"></div><div class="nmims-typing-dot"></div><div class="nmims-typing-dot"></div></div>';
-            } else if (msg.type === 'error') {
+                bubble.classList.add('bg-gray-200');
                 bubble.innerHTML = `
-                    <div class="nmims-error">${escapeHTML(msg.text)}</div>
-                    ${msg.retryQuery ? `<button class="nmims-retry-button" onclick="retryQuery('${escapeHTML(msg.retryQuery)}')">Try again</button>` : ''}
-                    ${msg.offlineMode ? `<div style="margin-top:8px;"><a href="mailto:support@nmims.edu?subject=Campus Assistant Query&body=${encodeURIComponent(msg.retryQuery || '')}" class="nmims-mailto-link">Send via email</a></div>` : ''}
+                    <div class="nmims-typing flex gap-1.5 p-2.5">
+                        <div class="nmims-typing-dot w-2 h-2 rounded-full bg-gray-500 animate-bounce" style="animation-delay: 0s;"></div>
+                        <div class="nmims-typing-dot w-2 h-2 rounded-full bg-gray-500 animate-bounce" style="animation-delay: 0.1s;"></div>
+                        <div class="nmims-typing-dot w-2 h-2 rounded-full bg-gray-500 animate-bounce" style="animation-delay: 0.2s;"></div>
+                    </div>
+                    <style>
+                        @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+                        .animate-bounce { animation: bounce 1.2s infinite ease-in-out; }
+                    </style>
+                `;
+            } else if (msg.type === 'error') {
+                bubble.classList.add('bg-red-100', 'border', 'border-red-300', 'text-red-800');
+                bubble.innerHTML = `
+                    <div class="nmims-error font-medium">${escapeHTML(msg.text)}</div>
+                    ${msg.retryQuery ? `<button class="nmims-retry-button mt-2 bg-[#D2232A] text-white py-1.5 px-3 rounded-md text-xs font-semibold hover:bg-[#a81c22]" onclick="retryQuery('${escapeHTML(msg.retryQuery)}')">Try again</button>` : ''}
+                    ${msg.offlineMode ? `<div class="mt-2"><a href="mailto:support@nmims.edu?subject=Campus Assistant Query&body=${encodeURIComponent(msg.retryQuery || '')}" class="text-[#D2232A] underline font-semibold text-xs">Send via email</a></div>` : ''}
                 `;
             } else {
-                // Use simpleMarkdown for bot messages
-                if (msg.type === 'bot') {
-                    bubble.innerHTML = simpleMarkdown(msg.text);
-                } else {
+                if (msg.type === 'user') {
+                    bubble.classList.add('bg-[#D2232A]', 'text-white', 'rounded-br-lg');
                     bubble.textContent = msg.text;
+                } else {
+                    bubble.classList.add('bg-white', 'text-gray-800', 'rounded-bl-lg', 'border', 'border-gray-200');
+                    bubble.innerHTML = simpleMarkdown(msg.text);
                 }
 
                 // Low confidence badge
                 if (msg.confidence && msg.confidence < 0.6) {
                     const badge = document.createElement('div');
-                    badge.className = 'nmims-confidence-badge';
+                    badge.className = 'nmims-confidence-badge mt-2 inline-block bg-yellow-100 text-yellow-800 border border-yellow-300 px-2 py-0.5 rounded-full text-xs font-medium';
                     badge.textContent = '⚠️ Low confidence answer';
                     bubble.appendChild(badge);
                 }
@@ -1026,7 +503,7 @@
             // Timestamp
             if (msg.timestamp && msg.type !== 'typing') {
                 const time = document.createElement('div');
-                time.className = 'nmims-message-time';
+                time.className = 'nmims-message-time text-xs text-gray-400 mt-1 px-2';
                 time.textContent = formatTime(msg.timestamp);
                 messageDiv.appendChild(time);
             }
@@ -1036,49 +513,52 @@
 
         function createSourcesElement(sources, requestId) {
             const container = document.createElement('div');
-            container.className = 'nmims-sources';
+            container.className = 'nmims-sources mt-3 pt-3 border-t border-gray-200';
 
             const title = document.createElement('div');
-            title.className = 'nmims-sources-title';
+            title.className = 'nmims-sources-title text-xs font-semibold text-gray-500 mb-2';
             title.textContent = '📚 Sources:';
             container.appendChild(title);
 
+            const list = document.createElement('div');
+            list.className = 'space-y-1.5';
+            
             sources.forEach((source, index) => {
                 const item = document.createElement('div');
-                item.className = 'nmims-source-item';
+                item.className = 'nmims-source-item flex justify-between items-center bg-gray-50 p-2 rounded';
 
                 const info = document.createElement('div');
-                info.className = 'nmims-source-info';
+                info.className = 'nmims-source-info text-xs text-gray-600 truncate pr-2';
                 info.textContent = `${source.file} | p.${source.page}`;
-                info.title = `${source.file} | p.${source.page}`; // Tooltip for long names
+                info.title = `${source.file} | p.${source.page}`;
                 item.appendChild(info);
 
                 const btn = document.createElement('button');
-                btn.className = 'nmims-source-button';
-                btn.textContent = 'Open page';
+                btn.className = 'nmims-source-button bg-[#D2232A] text-white py-1 px-2.5 rounded text-xs font-medium transition-colors hover:bg-[#a81c22] focus:outline-none focus:ring-2 focus:ring-red-300';
+                btn.textContent = 'View';
                 const sourceId = `${requestId}-source-${index}`;
                 btn.addEventListener('click', () => openSource(source.file, source.page, sourceId));
                 item.appendChild(btn);
 
-                container.appendChild(item);
+                list.appendChild(item);
             });
-
+            container.appendChild(list);
             return container;
         }
 
         function createFeedbackElement(requestId) {
             const container = document.createElement('div');
-            container.className = 'nmims-feedback';
+            container.className = 'nmims-feedback mt-2.5 flex gap-2 items-center';
             container.id = `feedback-${requestId}`;
 
             const thumbsUp = document.createElement('button');
-            thumbsUp.className = 'nmims-feedback-button';
+            thumbsUp.className = 'nmims-feedback-button w-8 h-8 rounded-full border border-gray-300 bg-white text-base flex items-center justify-center cursor-pointer transition-all hover:bg-gray-100 hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-red-300';
             thumbsUp.innerHTML = '👍';
             thumbsUp.setAttribute('aria-label', 'Helpful');
             thumbsUp.addEventListener('click', (e) => handleFeedback(requestId, 'up', container, e.currentTarget));
 
             const thumbsDown = document.createElement('button');
-            thumbsDown.className = 'nmims-feedback-button';
+            thumbsDown.className = 'nmims-feedback-button w-8 h-8 rounded-full border border-gray-300 bg-white text-base flex items-center justify-center cursor-pointer transition-all hover:bg-gray-100 hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-red-300';
             thumbsDown.innerHTML = '👎';
             thumbsDown.setAttribute('aria-label', 'Not helpful');
             thumbsDown.addEventListener('click', (e) => handleFeedback(requestId, 'down', container, e.currentTarget));
@@ -1096,18 +576,15 @@
             const query = elements.input.value.trim();
             if (!query) return;
 
-            // Remove quick replies
             const quickReplies = elements.messagesContainer.querySelector('.nmims-quick-replies');
             if (quickReplies) {
                 quickReplies.remove();
-                 // Update state and session storage
                 const lastMsg = state.messages[state.messages.length - 1];
                 if (lastMsg && lastMsg.showQuickReplies) {
                     lastMsg.showQuickReplies = false;
                 }
             }
 
-            // Add user message
             const userMsg = {
                 type: 'user',
                 text: query,
@@ -1115,15 +592,12 @@
             };
             state.messages.push(userMsg);
             saveChatHistory();
-            renderMessages(); // Re-render to show user message
+            renderMessages();
 
-            // Clear input
             elements.input.value = '';
             autoResizeTextarea();
 
-            // Send to backend
             sendQuery(query);
-
             console.log('[NMIMS Chat] Message sent:', query);
         }
 
@@ -1135,7 +609,7 @@
         }
 
         function autoResizeTextarea() {
-            elements.input.style.height = 'auto';
+            elements.input.style.height = 'auto'; // Reset height
             elements.input.style.height = Math.min(elements.input.scrollHeight, 100) + 'px';
         }
 
@@ -1153,10 +627,11 @@
             const typingMsg = { type: 'typing', timestamp: new Date().toISOString() };
             state.messages.push(typingMsg);
             renderMessages();
+            elements.sendBtn.disabled = true;
 
             try {
                 const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+                const timeout = setTimeout(() => controller.abort(), 10000); 
 
                 const headers = { 'Content-Type': 'application/json' };
                 if (CONFIG.authToken) {
@@ -1175,6 +650,7 @@
                 });
 
                 clearTimeout(timeout);
+                elements.sendBtn.disabled = false;
 
                 if (!apiResponse.ok) {
                     throw new Error(`API error: ${apiResponse.status}`);
@@ -1188,6 +664,7 @@
 
             } catch (error) {
                 console.error('[NMIMS Chat] Query error:', error);
+                elements.sendBtn.disabled = false;
                 state.messages = state.messages.filter(m => m.type !== 'typing');
 
                 const isOffline = !navigator.onLine || error.name === 'AbortError';
@@ -1270,11 +747,12 @@
                 const data = await response.json();
 
                 if (data.snippet) {
-                    // Show snippet in overlay viewer
                     elements.sourceViewerBody.innerHTML = `
-                        <h3>${escapeHTML(fileId)} - Page ${page}</h3>
-                        <pre style="white-space: pre-wrap; font-size: 14px; line-height: 1.6; margin-top: 10px;">${escapeHTML(data.snippet)}</pre>
+                        <h3 class="text-lg font-semibold text-gray-800">${escapeHTML(fileId)} - Page ${page}</h3>
+                        <pre class="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed bg-gray-50 p-3 rounded-md mt-2">${escapeHTML(data.snippet)}</pre>
                     `;
+                    elements.sourceViewer.classList.remove('hidden');
+                    elements.sourceViewer.classList.add('flex');
                     elements.sourceViewer.setAttribute('aria-hidden', 'false');
                     elements.sourceViewer.querySelector('.nmims-source-viewer-close').focus();
                     console.log('[NMIMS Chat] Showing snippet in overlay viewer');
@@ -1289,6 +767,8 @@
         }
 
         function closeSourceViewer() {
+            elements.sourceViewer.classList.add('hidden');
+            elements.sourceViewer.classList.remove('flex');
             elements.sourceViewer.setAttribute('aria-hidden', 'true');
         }
 
@@ -1296,22 +776,21 @@
         // FEEDBACK
         // ========================================
         async function handleFeedback(requestId, rating, container, clickedButton) {
-            // Disable buttons
             const buttons = container.querySelectorAll('.nmims-feedback-button');
             buttons.forEach(btn => {
                 btn.disabled = true;
-                btn.classList.remove('active');
+                btn.classList.remove('bg-[#D2232A]', 'text-white'); // Remove active state
             });
-            clickedButton.classList.add('active');
+            clickedButton.classList.add('bg-[#D2232A]', 'text-white', 'border-[#D2232A]'); // Set active state
 
             if (rating === 'down') {
                 if (!container.querySelector('.nmims-feedback-comment')) {
                     const commentBox = document.createElement('textarea');
-                    commentBox.className = 'nmims-feedback-comment';
+                    commentBox.className = 'nmims-feedback-comment w-full mt-2 p-2 border border-gray-300 rounded-md text-sm outline-none focus:ring-2 focus:ring-[#D2232A]';
                     commentBox.placeholder = 'What could be improved? (optional)';
 
                     const submitBtn = document.createElement('button');
-                    submitBtn.className = 'nmims-feedback-submit';
+                    submitBtn.className = 'nmims-feedback-submit mt-1.5 bg-[#D2232A] text-white py-1 px-3 rounded text-xs font-medium transition-colors hover:bg-[#a81c22]';
                     submitBtn.textContent = 'Submit feedback';
                     submitBtn.addEventListener('click', () => submitFeedback(requestId, rating, commentBox.value, container));
 
@@ -1349,9 +828,7 @@
                 if (submitBtn) submitBtn.remove();
 
                 const thanks = document.createElement('span');
-                thanks.style.fontSize = '12px';
-                thanks.style.color = 'var(--text-secondary)';
-                thanks.style.marginLeft = '8px';
+                thanks.className = 'text-xs text-gray-500 ml-2 font-medium';
                 thanks.textContent = '✓ Thank you!';
                 container.appendChild(thanks);
 
@@ -1359,7 +836,6 @@
 
             } catch (error) {
                 console.error('[NMIMS Chat] Error submitting feedback:', error);
-                // Re-enable buttons if submit fails
                  const buttons = container.querySelectorAll('.nmims-feedback-button');
                  buttons.forEach(btn => btn.disabled = false);
             }
@@ -1381,7 +857,6 @@
                 const saved = sessionStorage.getItem('nmims-chat-history');
                 if (saved) {
                     state.messages = JSON.parse(saved);
-                    // Ensure old sessions don't show quick replies on load
                     state.messages.forEach(msg => {
                         if (msg.showQuickReplies) msg.showQuickReplies = false;
                     });
