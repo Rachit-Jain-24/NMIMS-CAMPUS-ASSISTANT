@@ -152,7 +152,33 @@ def load_document(file_path: str, filename: str) -> List[Document]:
             except Exception:
                 loader = CSVLoader(file_path, autodetect_encoding=True)
         elif ext in ['.xlsx', '.xls']:
-            loader = UnstructuredExcelLoader(file_path, mode="elements")
+            logger.info(f"Using pandas.read_excel for {filename}")
+            # Use pandas to load, one row per document
+            df = pd.read_excel(file_path)
+            
+            # Convert each row to a document
+            pages = []
+            for i, row in df.iterrows():
+                # Combine all columns into a single string for the page_content
+                content = ", ".join([f"{col}: {val}" for col, val in row.astype(str).to_dict().items()])
+                
+                # Add metadata
+                metadata = {
+                    "source": filename,
+                    "row": i + 1  # Add row number (1-indexed)
+                }
+                
+                pages.append(Document(page_content=content, metadata=metadata))
+            
+            # Since we didn't use a loader, we return the pages directly
+            # The rest of the function (e.g., loader.load()) must be skipped
+            
+            # Standardize metadata (copied from your function's end)
+            for page in pages:
+                page.metadata['source'] = filename
+                if 'row' not in page.metadata:
+                     page.metadata['row'] = page.metadata.get('_index_', i) + 1
+            return pages # <-- Return directly
         elif ext == '.docx':
             loader = Docx2txtLoader(file_path)
         elif ext == '.pptx':
