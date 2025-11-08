@@ -223,3 +223,39 @@ class RAGBackend:
         except Exception as e:
             logger.error(f"RAG Error: {e}", exc_info=True)
             return {"answer": "I encountered an error while processing your request. Please try again.", "sources": []}
+
+    # --- NEW METHOD ---
+    def get_source_snippet(self, source_file: str, page_num: str) -> str:
+        """
+        Retrieves the text content for a specific source and page/row.
+        """
+        logger.info(f"Snippet Request: Searching for {source_file}, page/row {page_num}")
+
+        # We must search all vector stores, as we don't know the school context
+        # from the source_file path alone.
+        for school, store in self.vector_stores.items():
+            try:
+                # FAISS vector stores loaded from LangChain often keep an in-memory
+                # docstore, which is a dictionary of ID -> Document.
+                if hasattr(store, 'docstore') and hasattr(store.docstore, '_dict'):
+                    for doc_id, doc in store.docstore._dict.items():
+                        meta = doc.metadata
+                        doc_source = meta.get('source', '')
+
+                        # Check if this is the file we want
+                        if doc_source == source_file:
+                            # Now check if the page/row matches.
+                            # We check 'page' (for PDFs) and 'row' (for CSVs/Excel)
+                            current_page_val = meta.get('page', meta.get('row', 'N/A'))
+                            
+                            if str(current_page_val) == str(page_num):
+                                logger.info(f"Found snippet in store '{school}'")
+                                return doc.page_content
+                else:
+                    logger.warning(f"Store {school} has no accessible .docstore._dict. Cannot retrieve snippet.")
+
+            except Exception as e:
+                logger.error(f"Error searching docstore for {school}: {e}", exc_info=True)
+
+        logger.warning(f"Snippet not found for {source_file}, page {page_num}")
+        return f"Sorry, the full snippet for {os.path.basename(source_file)} (Page {page_num}) could not be retrieved."

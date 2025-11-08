@@ -208,16 +208,32 @@ def feedback():
     # TODO: Add logic to store this feedback
     return jsonify({"status": "success", "message": "Feedback received"}), 200
 
+# --- MODIFIED ROUTE ---
 @app.route('/api/sources', methods=['GET'])
 def get_source():
     """Handles source lookups from the widget."""
-    file_id = request.args.get('file_id')
+    file_id = request.args.get('file_id') # This is the full 'source' path
     page = request.args.get('page')
     logger.info(f"Source request for: {file_id}, page {page}")
-    # TODO: Add logic to fetch a specific page snippet from S3
-    return jsonify({
-        "snippet": f"This is placeholder content for {file_id}, page {page}. Build this logic to fetch real data."
-    }), 200
+
+    if not rag_system:
+            return jsonify({"snippet": "Error: The RAG system is not initialized."}), 500
+        
+    if not file_id or not page:
+        return jsonify({"snippet": "Error: Missing file_id or page parameter."}), 400
+
+    try:
+        # Call the new method on the RAGBackend instance
+        snippet = rag_system.get_source_snippet(file_id, page)
+        
+        return jsonify({
+            "snippet": snippet
+        }), 200
+        
+    except Exception as e:
+        logger.exception(f"Error retrieving snippet for {file_id}")
+        return jsonify({"snippet": f"An error occurred while fetching the source: {str(e)}"}), 500
+# --- END MODIFICATION ---
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8086)) 

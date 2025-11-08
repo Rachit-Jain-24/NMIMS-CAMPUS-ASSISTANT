@@ -586,6 +586,7 @@
             return messageDiv;
         }
 
+        // --- MODIFIED FUNCTION ---
         function createSourcesElement(sources, requestId) {
             const container = document.createElement('div');
             container.className = 'nmims-sources mt-3 pt-3 border-t border-gray-200';
@@ -602,16 +603,31 @@
                 const item = document.createElement('div');
                 item.className = 'nmims-source-item flex justify-between items-center bg-gray-50 p-2 rounded';
 
+                // --- START MODIFICATION ---
+                // 1. Clean the filename for display
+                let displayName = source.file;
+                try {
+                    // Get the last part of the path after / or \
+                    displayName = displayName.split(/[\\/]/).pop();
+                } catch (e) {
+                    // Fallback to original if split fails
+                    displayName = source.file;
+                }
+
                 const info = document.createElement('div');
                 info.className = 'nmims-source-info text-xs text-gray-600 truncate pr-2';
-                info.textContent = `${source.file} | p.${source.page}`;
+                // 2. Use the clean displayName for textContent
+                info.textContent = `${displayName} | p.${source.page}`;
+                // 3. Keep the full original path in the hover-over title
                 info.title = `${source.file} | p.${source.page}`;
                 item.appendChild(info);
+                // --- END MODIFICATION ---
 
                 const btn = document.createElement('button');
                 btn.className = 'nmims-source-button bg-[#D2232A] text-white py-1 px-2.5 rounded text-xs font-medium transition-colors hover:bg-[#a81c22] focus:outline-none focus:ring-2 focus:ring-red-300';
                 btn.textContent = 'View';
                 const sourceId = `${requestId}-source-${index}`;
+                // 4. Continue using the original source.file (full path) for the API call
                 btn.addEventListener('click', () => openSource(source.file, source.page, sourceId));
                 item.appendChild(btn);
 
@@ -620,6 +636,7 @@
             container.appendChild(list);
             return container;
         }
+        // --- END MODIFIED FUNCTION ---
 
         function createFeedbackElement(requestId) {
             const container = document.createElement('div');
