@@ -735,6 +735,33 @@
                 const selectedLang = elements.langSelect.value || 'en';
                 // -------------------------------------
 
+                // --- FIX: Build chat history from state.messages ---
+                const chatHistory = [];
+                for (let i = 0; i < state.messages.length; i++) {
+                    const msg = state.messages[i];
+                    // Skip typing messages
+                    if (msg.type === 'typing' || msg.type === 'error') continue;
+                    
+                    // If it's a user message, look for the following bot response
+                    if (msg.type === 'user') {
+                        const userQuery = msg.text;
+                        let botAnswer = '';
+                        
+                        // Find the next bot message
+                        if (i + 1 < state.messages.length && state.messages[i + 1].type === 'bot') {
+                            botAnswer = state.messages[i + 1].text;
+                        }
+                        
+                        if (botAnswer) {
+                            chatHistory.push({
+                                query: userQuery,
+                                answer: botAnswer
+                            });
+                        }
+                    }
+                }
+                // -----------------------------------------------
+
                 const apiResponse = await fetch(`${CONFIG.apiBase}/chat`, {
                     method: 'POST',
                     headers: headers,
@@ -742,7 +769,8 @@
                         session_id: CONFIG.sessionId,
                         user_id: state.currentUserId,
                         query: query,
-                        language: selectedLang // <-- NEW: Send language to backend
+                        language: selectedLang,
+                        history: chatHistory // <-- FIX: Send chat history to backend
                     }),
                     signal: controller.signal
                 });
