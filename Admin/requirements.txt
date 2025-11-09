@@ -16,3 +16,6 @@ libmagic             # Dependency for unstructured
 python-magic         # Dependency for unstructured
 flask-cors
 amazon-textract-caller
+flask-login
+flask-bcrypt
+

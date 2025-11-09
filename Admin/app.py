@@ -5,6 +5,11 @@ from flask import Flask, render_template, request, flash, redirect, url_for
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
+# --- NEW IMPORTS for Login ---
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from flask_bcrypt import Bcrypt
+# -----------------------------
+
 # Import the processing logic
 import backend_processor as bp
 
@@ -13,8 +18,25 @@ load_dotenv()
 # --- Flask App Configuration ---
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
+# SECRET_KEY is read from the .env file (loaded by docker-compose)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'a_very_secret_fallback_key_CHANGE_ME')
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB file upload limit
+
+# --- NEW: Load Admin Credentials ---
+# These are loaded from the root .env file by docker-compose
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_HASHED_PASSWORD = os.getenv("ADMIN_HASHED_PASSWORD")
+if not ADMIN_HASHED_PASSWORD:
+    logging.warning("ADMIN_HASHED_PASSWORD is not set. Admin login will fail.")
+# ---------------------------------
+
+# --- NEW: Initialize Extensions ---
+bcrypt = Bcrypt(app)
+login_manager = LoginManager(app)
+login_manager.login_view = 'login' # Redirect to /login if not authenticated
+login_manager.login_message_category = 'info'
+# ---------------------------------
+
 
 ALLOWED_EXTENSIONS = {'pdf', 'csv', 'xlsx', 'docx', 'pptx', 'txt'}
 
@@ -22,9 +44,62 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# --- Routes ---
+# --- NEW: User Model and Loader ---
+class AdminUser(UserMixin):
+    """Simple user class for the Admin."""
+    def __init__(self, id):
+        self.id = id
+        self.username = ADMIN_USERNAME
+
+@login_manager.user_loader
+def load_user(user_id):
+    """Required by Flask-Login to load the user from session."""
+    if user_id == ADMIN_USERNAME:
+        return AdminUser(ADMIN_USERNAME)
+    return None
+# ---------------------------------
+
+# --- NEW: Login and Logout Routes ---
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Handles the login page."""
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        # Validate credentials
+        if username == ADMIN_USERNAME and ADMIN_HASHED_PASSWORD and bcrypt.check_password_hash(ADMIN_HASHED_PASSWORD, password):
+            user = AdminUser(username)
+            login_user(user, remember=True) # 'remember=True' adds a secure cookie
+            flash('Logged in successfully.', 'success')
+            
+            # Redirect to the page they were trying to access, or index
+            next_page = request.args.get('next')
+            return redirect(next_page or url_for('index'))
+        else:
+            flash('Login failed. Please check username and password.', 'danger')
+            
+    # This will render Admin/templates/login.html (which you need to create)
+    return render_template('login.html') 
+
+@app.route('/logout')
+@login_required # Must be logged in to log out
+def logout():
+    """Handles logging out the user."""
+    logout_user()
+    flash('You have been logged out.', 'success')
+    return redirect(url_for('login'))
+# -----------------------------------
+
+
+# --- Routes (Now Protected) ---
 
 @app.route('/', methods=['GET'])
+@login_required  # <-- PROTECTED
 def index():
     """
     Handles displaying the main page and listing the files.
@@ -55,6 +130,7 @@ def index():
 
 
 @app.route('/upload', methods=['POST'])
+@login_required  # <-- PROTECTED
 def upload_file_router():
     """
     --- *** NEW SMART UPLOAD LOGIC *** ---
@@ -127,6 +203,7 @@ def upload_file_router():
 
 
 @app.route('/rebuild', methods=['POST'])
+@login_required  # <-- PROTECTED
 def rebuild_knowledge_base_router():
     """
     (SLOW) Handles the request to rebuild the vector store from all source files.
@@ -144,6 +221,7 @@ def rebuild_knowledge_base_router():
 
 
 @app.route('/delete', methods=['POST'])
+@login_required  # <-- PROTECTED
 def delete_file_router():
     """
     Handles the request to delete a single source file.
@@ -166,6 +244,7 @@ def delete_file_router():
 
 
 @app.route('/clear', methods=['POST'])
+@login_required  # <-- PROTECTED
 def clear_knowledge_base_router():
     """
     (DANGEROUS) Handles the request to delete ALL federated vector stores AND all source files.

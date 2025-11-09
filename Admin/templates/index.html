@@ -16,6 +16,7 @@
     .alert-success { background-color: #d4edda; border-color: #c3e6cb; color: #155724; }
     .alert-danger { background-color: #f8d7da; border-color: #f5c6cb; color: #721c24; }
     .alert-warning { background-color: #fff3cd; border-color: #ffeeba; color: #856404; }
+    .alert-info { background-color: #d1ecf1; border-color: #bee5eb; color: #0c5460; } /* Added info class */
 
     body {
       background-image: url("{{ url_for('static', filename='media/background.jpg') }}");
@@ -59,10 +60,17 @@
         </a>
       </div>
   
+      <!-- ======== MODIFIED SECTION ======== -->
       <div class="flex items-center gap-6">
         
-        <a href="#" class="bg-[#d2232a] text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 transition duration-300 ease-in-out shadow-lg">
-          Admin Portal
+        <!-- Welcome message, hidden on small screens -->
+        <span class="text-sm font-medium text-gray-700 hidden sm:block">
+          Welcome, <strong class="font-bold">{{ current_user.username }}</strong>
+        </span>
+        
+        <!-- Logout button -->
+        <a href="{{ url_for('logout') }}" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300 ease-in-out shadow-lg">
+          Logout
         </a>
   
         <div>
@@ -72,6 +80,7 @@
         </div>
   
       </div>
+      <!-- ================================== -->
     </nav>
   </header>
 
@@ -81,6 +90,7 @@
       {% if messages %}
         <div class="max-w-6xl mx-auto mb-6 space-y-3">
           {% for category, message in messages %}
+            <!-- Use category to apply the correct style -->
             <div class="alert-{{ category }} p-4 rounded-lg shadow-md" role="alert">
               {{ message }}
             </div>
@@ -277,7 +287,7 @@
       
       if (clearForm) {
           clearForm.addEventListener('submit', (event) => {
-               const isConfirmed = confirm('Are you sure you want to permanently delete ALL source files and the entire knowledge base? This action cannot be undone.');
+              const isConfirmed = confirm('Are you sure you want to permanently delete ALL source files and the entire knowledge base? This action cannot be undone.');
               if (isConfirmed) {
                   showLoading("Clearing entire knowledge base...");
               } else {
