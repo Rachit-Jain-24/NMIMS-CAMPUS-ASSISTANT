@@ -6,16 +6,12 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import boto3
 
-# --- NEW: Import the RAGBackend class ---
 from rag_backend import RAGBackend
-# ----------------------------------------
 
-# --- Imports for other features ---
 from deep_translator import GoogleTranslator
 import whisper
 import tempfile
 import base64
-# --------------------------------
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,6 +27,11 @@ AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_DEFAULT_REGION", "ap-south-1")
 BUCKET_NAME = os.getenv("BUCKET_NAME")
+
+# --- Load Secret Key for Refresh Endpoint ---
+REFRESH_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "default_secret_key_fallback")
+if REFRESH_SECRET_KEY == "default_secret_key_fallback":
+    logger.warning("FLASK_SECRET_KEY is not set. Refresh endpoint is using a default key.")
 
 if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BUCKET_NAME]):
     logger.critical("Missing AWS config. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BUCKET_NAME in environment/.env")
@@ -63,7 +64,7 @@ except Exception as e:
     logger.error(f"Could not load Whisper model: {e}. Voice transcription will fail.")
     whisper_model = None
 
-# --- NEW: Initialize the RAGBackend Class ---
+# --- Initialize the RAGBackend Class ---
 try:
     if not all([s3_client, bedrock_client, BUCKET_NAME]):
         raise RuntimeError("AWS clients or bucket name not configured. RAGBackend cannot start.")
@@ -77,7 +78,6 @@ try:
 except Exception as e:
     logger.critical(f"Failed to initialize RAGBackend: {e}")
     rag_system = None
-# ------------------------------------------
 
 # --- Routes ---
 
@@ -86,7 +86,6 @@ def index():
     """Serves the main page that links to the widget."""
     return render_template('index.html')
 
-# --- Whisper Transcription Endpoint ---
 @app.route('/api/transcribe', methods=['POST'])
 def transcribe_audio():
     if not whisper_model:
@@ -115,7 +114,6 @@ def transcribe_audio():
         logger.exception("Error during transcription")
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
-# --- Main Chat Endpoint (Updated) ---
 @app.route('/api/chat', methods=['POST'])
 def chat():
     if not rag_system or not rag_system.vector_stores:
@@ -130,25 +128,19 @@ def chat():
         data = request.json
         query = data.get('query')
         language_code = data.get('language', 'en') 
-        
-        # --- ENHANCEMENT: Get chat history from payload ---
-        # We expect history to be a list of dicts: [{'query': '...', 'answer': '...'}]
         chat_history = data.get('history', []) 
 
         if not query:
             return jsonify({'answer': 'No query provided.', 'sources': [], 'request_id': 'error', 'confidence': 0.0}), 400
 
-        # --- ENHANCEMENT: Translation logic now handles query AND history ---
         translated_query = query
         translated_history = []
 
         try:
             if language_code != 'en':
-                # 1. Translate current query
                 translated_query = GoogleTranslator(source='auto', target='en').translate(query)
                 logger.info(f"Translated query ({language_code} -> en): '{query}' -> '{translated_query}'")
                 
-                # 2. Translate history to English for the RAG model
                 for turn in chat_history:
                     trans_q = GoogleTranslator(source='auto', target='en').translate(turn.get('query', ''))
                     trans_a = GoogleTranslator(source='auto', target='en').translate(turn.get('answer', ''))
@@ -157,16 +149,14 @@ def chat():
                 logger.info(f"Translated {len(translated_history)} history turns to English.")
             
             else:
-                # If lang is 'en', assume history is already in English
                 translated_query = query
                 translated_history = chat_history
         
         except Exception as e:
             logger.error(f"Translation failed: {e}. Using original query/history.")
             translated_query = query
-            translated_history = chat_history # Pass as-is
+            translated_history = chat_history
         
-        # --- 2. Get RAG Response (pass translated query and history) ---
         response_data = rag_system.get_rag_response(
             translated_query, 
             chat_history=translated_history
@@ -175,7 +165,6 @@ def chat():
         answer_text = response_data.get("answer", "An error occurred.")
         sources = response_data.get("sources", [])
         
-        # --- 3. Translation Logic (from English) ---
         try:
             if language_code != 'en':
                 final_answer = GoogleTranslator(source='en', target=language_code).translate(answer_text)
@@ -185,7 +174,6 @@ def chat():
         except Exception as e:
             logger.error(f"Translation from English failed: {e}. Sending English answer.")
             final_answer = answer_text
-        # ---------------------------
 
         return jsonify({
             'answer': final_answer,
@@ -198,21 +186,15 @@ def chat():
         logger.exception("Error in /api/chat endpoint")
         return jsonify({'answer': f'An error occurred: {str(e)}', 'sources': [], 'request_id': 'error', 'confidence': 0.0}), 500
         
-# --- Other API routes (unchanged) ---
-
 @app.route('/api/feedback', methods=['POST'])
 def feedback():
-    """Handles feedback submission from the widget."""
     data = request.json
     logger.info(f"Feedback received: {data}")
-    # TODO: Add logic to store this feedback
     return jsonify({"status": "success", "message": "Feedback received"}), 200
 
-# --- MODIFIED ROUTE ---
 @app.route('/api/sources', methods=['GET'])
 def get_source():
-    """Handles source lookups from the widget."""
-    file_id = request.args.get('file_id') # This is the full 'source' path
+    file_id = request.args.get('file_id') 
     page = request.args.get('page')
     logger.info(f"Source request for: {file_id}, page {page}")
 
@@ -223,7 +205,6 @@ def get_source():
         return jsonify({"snippet": "Error: Missing file_id or page parameter."}), 400
 
     try:
-        # Call the new method on the RAGBackend instance
         snippet = rag_system.get_source_snippet(file_id, page)
         
         return jsonify({
@@ -233,7 +214,39 @@ def get_source():
     except Exception as e:
         logger.exception(f"Error retrieving snippet for {file_id}")
         return jsonify({"snippet": f"An error occurred while fetching the source: {str(e)}"}), 500
-# --- END MODIFICATION ---
+
+# --- *** ADD THIS NEW ROUTE *** ---
+@app.route('/api/refresh-knowledge-base', methods=['POST'])
+def refresh_knowledge_base():
+    """
+    A secure endpoint to trigger a reload of the in-memory vector stores.
+    """
+    # 1. Check for the secret key
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or auth_header != REFRESH_SECRET_KEY:
+        logger.warning("Unauthorized attempt to refresh knowledge base.")
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+    
+    # 2. Check if the RAG system is initialized
+    if not rag_system:
+        logger.error("Refresh triggered, but RAG system is not initialized.")
+        return jsonify({"status": "error", "message": "RAG system not initialized"}), 500
+        
+    # 3. Trigger the reload
+    try:
+        logger.info("Authorized refresh request received. Reloading stores...")
+        success = rag_system.reload_all_stores()
+        if success:
+            logger.info("Reload successful.")
+            return jsonify({"status": "success", "message": "Knowledge base reloaded."}), 200
+        else:
+            logger.error("Reload failed. Check RAGBackend logs.")
+            return jsonify({"status": "error", "message": "Reload failed, check user logs."}), 500
+    except Exception as e:
+        logger.exception("Exception during knowledge base refresh.")
+        return jsonify({"status": "error", "message": str(e)}), 500
+# --- *** END OF NEW ROUTE *** ---
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8086)) 

@@ -18,4 +18,4 @@ flask-cors
 amazon-textract-caller
 flask-login
 flask-bcrypt
-
+requests

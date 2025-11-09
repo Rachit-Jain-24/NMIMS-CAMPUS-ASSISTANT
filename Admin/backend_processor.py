@@ -5,6 +5,7 @@ import time
 import tempfile
 import logging
 import re
+import requests # <-- Requires "pip install requests"
 from typing import List
 from dotenv import load_dotenv
 import pandas as pd
@@ -18,6 +19,9 @@ from langchain_aws import BedrockEmbeddings
 from langchain_community.document_loaders.text import TextLoader
 from langchain_community.document_loaders.word_document import Docx2txtLoader
 from langchain_community.document_loaders.powerpoint import UnstructuredPowerPointLoader
+# --- Import PyPDF for fallback ---
+from pypdf import PdfReader
+# --- END NEW ---
 
 # Load environment variables
 load_dotenv()
@@ -32,6 +36,10 @@ AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_DEFAULT_REGION", "ap-south-1")
 BUCKET_NAME = os.getenv("BUCKET_NAME")
+
+# --- Load Secret Key to Auth with User App ---
+FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
+# --- END NEW ---
 
 if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BUCKET_NAME]):
     logger.error("Missing critical AWS environment variables. Check .env file.")
@@ -50,6 +58,36 @@ TEXT_CHUNK_OVERLAP = 200
 def get_unique_id() -> str:
     """Generate a unique ID for tracking purposes."""
     return str(uuid.uuid4())
+
+# --- Helper function to ping User app ---
+def _trigger_user_app_reload():
+    """
+    Sends a secure POST request to the 'user' app to
+    tell it to reload its vector stores.
+    """
+    try:
+        if not FLASK_SECRET_KEY:
+            logger.warning("FLASK_SECRET_KEY not set in admin. Cannot trigger user app reload.")
+            return
+
+        # --- THIS IS THE FIX for NO DOCKER ---
+        url = "http://localhost:8086/api/refresh-knowledge-base"
+        # --- END FIX ---
+        
+        headers = { "Authorization": FLASK_SECRET_KEY }
+        
+        logger.info(f"Triggering knowledge base reload on user app at {url}...")
+        response = requests.post(url, headers=headers, timeout=10) 
+        
+        if response.status_code == 200:
+            logger.info("User app reported successful reload.")
+        else:
+            logger.warning(f"User app reported an error: {response.status_code} {response.text}")
+            
+    except requests.exceptions.ConnectionError:
+        logger.error(f"Could not connect to user app at {url}. Is it running in another terminal?")
+    except Exception as e:
+        logger.error(f"Failed to trigger reload on user app: {e}")
 
 # --- AWS Clients & Embeddings (Initialized once) ---
 try:
@@ -90,17 +128,17 @@ def list_source_files() -> List[dict]:
         response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=SOURCE_DOCS_PREFIX)
         if 'Contents' in response:
             for obj in response['Contents']:
-                if obj['Key'] == SOURCE_DOCS_PREFIX:
+                if obj['Key'] == SOURCE_DOCS_PREFIX or obj['Key'].endswith('/'):
                     continue
                 
                 filename = os.path.basename(obj['Key'])
                 school, doc_type, display_name = _parse_standardized_filename(filename)
 
                 files.append({
-                    'key': filename, # The full key
-                    'display_name': display_name,
-                    'school': school,
-                    'doc_type': doc_type,
+                    'key': filename, # The full key, e.g., "[GENERAL]_[other]__Nmims_Hostel_Leave.pdf"
+                    'display_name': display_name, # The part after __, e.g., "Nmims_Hostel_Leave.pdf"
+                    'school': school, # The parsed school, e.g., "general"
+                    'doc_type': doc_type, # The parsed type, e.g., "other"
                     'last_modified': obj['LastModified'],
                     'size': obj['Size']
                 })
@@ -146,27 +184,24 @@ def delete_source_file(filename: str) -> bool:
 def load_document(s3_key: str, display_name: str) -> List[Document]:
     """
     Detects file type and uses the appropriate (and most efficient) loader.
+    Now with robust PDF fallback.
     """
     _, ext = os.path.splitext(display_name)
     ext = ext.lower()
     
-    loader = None
     pages: List[Document] = []
+    full_s3_key = f"{SOURCE_DOCS_PREFIX}{s3_key}"
     
     try:
         if ext == '.pdf':
-            logger.info(f"Using AWS Textract directly for PDF: {s3_key}")
-            full_s3_key = f"{SOURCE_DOCS_PREFIX}{s3_key}"
-            
-            # Use Textract to extract text from PDF
+            logger.info(f"Using AWS Textract (OCR) for PDF: {s3_key}")
             try:
                 response = textract_client.start_document_text_detection(
                     DocumentLocation={'S3Object': {'Bucket': BUCKET_NAME, 'Name': full_s3_key}}
                 )
                 job_id = response['JobId']
                 
-                # Wait for job to complete
-                import time
+                status = 'IN_PROGRESS'
                 while True:
                     result = textract_client.get_document_text_detection(JobId=job_id)
                     status = result['JobStatus']
@@ -175,28 +210,26 @@ def load_document(s3_key: str, display_name: str) -> List[Document]:
                     time.sleep(2)
                 
                 if status == 'SUCCEEDED':
-                    # Extract text from all pages
                     page_texts = {}
-                    for block in result.get('Blocks', []):
-                        if block['BlockType'] == 'LINE':
-                            page_num = block.get('Page', 1)
-                            if page_num not in page_texts:
-                                page_texts[page_num] = []
-                            page_texts[page_num].append(block.get('Text', ''))
-                    
-                    # Handle pagination if needed
-                    next_token = result.get('NextToken')
-                    while next_token:
-                        result = textract_client.get_document_text_detection(JobId=job_id, NextToken=next_token)
+                    next_token = None
+                    while True:
+                        kwargs = {'JobId': job_id}
+                        if next_token:
+                            kwargs['NextToken'] = next_token
+                        
+                        result = textract_client.get_document_text_detection(**kwargs)
+                        
                         for block in result.get('Blocks', []):
                             if block['BlockType'] == 'LINE':
                                 page_num = block.get('Page', 1)
                                 if page_num not in page_texts:
                                     page_texts[page_num] = []
                                 page_texts[page_num].append(block.get('Text', ''))
+                        
                         next_token = result.get('NextToken')
+                        if not next_token:
+                            break
                     
-                    # Create Document objects for each page
                     for page_num in sorted(page_texts.keys()):
                         text = '\n'.join(page_texts[page_num])
                         if text.strip():
@@ -204,35 +237,42 @@ def load_document(s3_key: str, display_name: str) -> List[Document]:
                                 page_content=text,
                                 metadata={'source': display_name, 'page': page_num}
                             ))
+                    logger.info(f"Textract successfully extracted {len(pages)} pages.")
                 else:
-                    logger.error(f"Textract job failed for {display_name}")
+                    logger.error(f"Textract job failed for {display_name}. Status: {status}")
                     
             except Exception as textract_error:
-                logger.error(f"Textract processing failed for {display_name}: {textract_error}")
-                # Fallback: try pypdf as alternative
+                logger.error(f"Textract call failed for {display_name}: {textract_error}.")
+                logger.error("THIS OFTEN MEANS YOUR AWS USER IS MISSING TEXTRACT PERMISSIONS.")
+
+            # --- ROBUST FALLBACK ---
+            if not pages:
+                logger.warning(f"Textract yielded no pages. Attempting PyPDF (non-OCR) fallback for {display_name}.")
                 try:
-                    from pypdf import PdfReader
                     with tempfile.TemporaryDirectory() as temp_dir:
                         temp_file_path = os.path.join(temp_dir, display_name)
                         s3_client.download_file(BUCKET_NAME, full_s3_key, temp_file_path)
                         reader = PdfReader(temp_file_path)
                         for i, page in enumerate(reader.pages):
                             text = page.extract_text()
-                            if text.strip():
+                            if text and text.strip():
                                 pages.append(Document(
                                     page_content=text,
                                     metadata={'source': display_name, 'page': i + 1}
                                 ))
+                        logger.info(f"PyPDF fallback loaded {len(pages)} pages.")
                 except Exception as pypdf_error:
-                    logger.error(f"PyPDF fallback also failed: {pypdf_error}")
+                    logger.error(f"PyPDF fallback also failed for {display_name}: {pypdf_error}")
+            # --- END FALLBACK ---
 
         else:
+            # This logic handles non-PDF files (CSV, DOCX, etc.)
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_file_path = os.path.join(temp_dir, display_name)
-                full_s3_key = f"{SOURCE_DOCS_PREFIX}{s3_key}"
                 logger.info(f"Downloading {full_s3_key} to {temp_file_path} for local processing...")
                 s3_client.download_file(BUCKET_NAME, full_s3_key, temp_file_path)
             
+                loader = None
                 if ext == '.csv':
                     logger.info(f"Using pandas.read_csv for {display_name}")
                     df = pd.read_csv(temp_file_path, on_bad_lines='skip', encoding='utf-8', encoding_errors='ignore')
@@ -262,19 +302,23 @@ def load_document(s3_key: str, display_name: str) -> List[Document]:
                 if loader:
                     pages = loader.load()
 
+        # --- Final processing (applies to all types) ---
         if not pages:
-            logger.warning(f"No pages/rows loaded for {display_name}.")
+            logger.warning(f"No pages/rows loaded for {display_name}. File may be empty or unreadable.")
             return []
 
+        # Assign metadata
         for i, page in enumerate(pages):
             page.metadata['source'] = display_name 
             if ext == '.pdf' and 'page' not in page.metadata:
                 page.metadata['page'] = i + 1
+            elif ext not in ['.csv', '.xlsx', '.xls'] and 'page' not in page.metadata:
+                 page.metadata['page'] = i + 1
         
         return pages
         
     except Exception as e:
-        logger.error(f"Failed to load document {display_name} with loader: {e}")
+        logger.error(f"Failed to load document {display_name} with loader: {e}", exc_info=True)
         return []
 
 def split_text(pages: List[Document], chunk_size: int, chunk_overlap: int) -> List[Document]:
@@ -283,7 +327,8 @@ def split_text(pages: List[Document], chunk_size: int, chunk_overlap: int) -> Li
     """
     chunks: List[Document] = []
     for page in pages:
-        if 'row' in page.metadata: # Do not split tabular data
+        # Do not split tabular data
+        if 'row' in page.metadata or 'sheet' in page.metadata:
             chunks.append(page)
             continue
         
@@ -307,27 +352,49 @@ def split_text(pages: List[Document], chunk_size: int, chunk_overlap: int) -> Li
 
 # --- Metadata Parsing ---
 
+# --- *** BUG FIX 1: Robust Filename Parser *** ---
 def _parse_standardized_filename(filename: str) -> tuple[str, str, str]:
     """
-    Parses a standardized filename.
+    Parses a standardized filename, e.g.,
+    [SBM]_[book_list]__SBM_Books_List.xlsx
+    [GENERAL]__Holiday_list.pdf
     Returns: (school, doc_type, display_name)
     """
-    if filename.startswith("[") and "]__" in filename:
-        try:
-            parts = filename.split("]__", 1)
-            tags = parts[0].replace("[", "").split("]_[")
-            school = tags[0].upper()
+    if not (filename.startswith("[") and "]__" in filename):
+        logger.warning(f"Filename '{filename}' is not standardized. Classifying as 'general'/'other'.")
+        return "general", "other", filename
+
+    try:
+        parts = filename.split("]__", 1)
+        display_name = parts[1]
+        tags_part = parts[0].strip("[]") # Removes surrounding '[' and ']' -> "SBM]_[book_list" or "GENERAL"
+        
+        tags = tags_part.split("]_[")
+        
+        school = tags[0].upper()
+        doc_type = "other" # Default if no doc_type is provided
+        
+        if len(tags) > 1:
             doc_type = tags[1].lower()
-            display_name = parts[1]
+
+        # Validate school
+        if school == "GENERAL":
+            school = "general"
+        
+        if school not in ALL_SCHOOL_CONTEXTS:
+            logger.warning(f"Parsed unknown school '{school}' from '{filename}'. Defaulting to 'general'.")
+            school = "general"
+        
+        # Validate doc_type
+        if doc_type not in ALL_DOC_TYPES:
+            logger.warning(f"Parsed unknown doc_type '{doc_type}' from '{filename}'. Defaulting to 'other'.")
+            doc_type = "other"
             
-            if school not in ALL_SCHOOL_CONTEXTS: school = "general"
-            if doc_type not in ALL_DOC_TYPES: doc_type = "other"
-            
-            return school, doc_type, display_name
-        except Exception:
-            pass
-    
-    return "Unknown", "Unknown", filename
+        return school, doc_type, display_name
+    except Exception as e:
+        logger.error(f"CRITICAL: Failed to parse filename '{filename}': {e}", exc_info=True)
+        return "general", "other", filename
+# --- *** END BUG FIX 1 *** ---
 
 def get_file_metadata(filename: str) -> dict:
     """ Gets metadata from the standardized filename. """
@@ -376,6 +443,7 @@ def load_vector_store_from_s3(school: str) -> FAISS:
 def save_vector_store_to_s3(vector_store: FAISS, school: str):
     """
     Saves a FAISS index to a temp folder and uploads it to S3.
+    Also triggers a reload on the user app.
     """
     s3_faiss_key = f"{KB_ROOT_PREFIX}{school}/vector_store.faiss"
     s3_pkl_key = f"{KB_ROOT_PREFIX}{school}/vector_store.pkl"
@@ -390,6 +458,8 @@ def save_vector_store_to_s3(vector_store: FAISS, school: str):
         s3_client.upload_file(local_faiss_path, BUCKET_NAME, s3_faiss_key)
         s3_client.upload_file(local_pkl_path, BUCKET_NAME, s3_pkl_key)
         logger.info(f"Successfully uploaded index for {school}.")
+        
+    _trigger_user_app_reload()
 
 def add_file_to_knowledge_base(s3_key: str, display_name: str, school: str, doc_type: str) -> int:
     """
@@ -407,11 +477,11 @@ def add_file_to_knowledge_base(s3_key: str, display_name: str, school: str, doc_
     metadata = {"school": school, "doc_type": doc_type}
     for doc in documents:
         doc.metadata.update(metadata)
-        doc.metadata['source'] = display_name 
+        # 'source' is already set by load_document
 
     chunks = split_text(documents, TEXT_CHUNK_SIZE, TEXT_CHUNK_OVERLAP)
     if not chunks:
-        logger.error(f"Failed to create any chunks from {display_name}. File might be empty or a scanned image.")
+        logger.error(f"Failed to create any chunks from {display_name}. File might be empty.")
         return 0
 
     logger.info(f"Adding {len(chunks)} new chunks to {school} vector store...")
@@ -465,41 +535,60 @@ def create_and_upload_vector_store(request_id: str, documents: List[Document], s
         logger.error(f"Error creating/uploading vector store for {school}: {e}")
         return False
 
+# --- *** BUG FIX 2: Robust Rebuild Function *** ---
 def rebuild_knowledge_base() -> int:
     """
     (SLOW) Downloads ALL source files and rebuilds ALL indexes from scratch.
+    Triggers a single reload at the end.
     """
     logger.warning("Starting SLOW knowledge base rebuild...")
-    source_files = list_source_files()
     
+    # 1. Initialize the dictionary for ALL known schools
     all_docs_by_school = {school: [] for school in ALL_SCHOOL_CONTEXTS}
+    
+    # 2. List files. list_source_files() now correctly parses names.
+    source_files = list_source_files()
     
     if not source_files:
         logger.warning("No source files found. Clearing all knowledge bases.")
+        # Still loop and create empty stores, then trigger reload
         for school in ALL_SCHOOL_CONTEXTS:
             create_and_upload_vector_store(get_unique_id(), [], school)
+        _trigger_user_app_reload()
         return 0
 
+    # 3. Process files
     for file in source_files:
         try:
-            filename_key = file['key'] # Full standardized key
+            filename_key = file['key']
             display_name = file['display_name']
             
-            metadata = get_file_metadata(filename_key)
-            school_context = metadata.get("school", "general")
+            # --- THIS IS THE FIX ---
+            # Use the *already-parsed* data from list_source_files()
+            school_context = file.get('school', 'general') # e.g., 'general'
+            doc_type = file.get('doc_type', 'other')     # e.g., 'other'
+            metadata = {"school": school_context, "doc_type": doc_type}
+            # --- END FIX ---
             
-            logger.info(f"Loading: {display_name} for school: {school_context}")
+            # This log will now be correct
+            logger.info(f"Loading: {display_name} (key: {filename_key}) for school: {school_context}")
+            
             docs = load_document(filename_key, display_name)
             
             for page in docs:
                 page.metadata.update(metadata)
-                page.metadata['source'] = display_name
+                # 'source' is already set by load_document
             
-            all_docs_by_school[school_context].extend(docs)
+            # This will now work, as school_context will be a valid key
+            # e.g., all_docs_by_school['general'].extend(docs)
+            all_docs_by_school[school_context].extend(docs) 
 
         except Exception as e:
-            logger.error(f"Failed to process file {filename_key}: {e}", exc_info=True)
+            # We log the error but continue processing other files
+            logger.error(f"CRITICAL: Failed to process file {file.get('key')}: {e}", exc_info=True)
+            # This will NOT be a KeyError anymore
     
+    # 4. Create and upload indexes
     total_chunks_processed = 0
     for school, school_docs in all_docs_by_school.items():
         if not school_docs:
@@ -511,6 +600,7 @@ def rebuild_knowledge_base() -> int:
         logger.info(f"Total text chunks for {school}: {len(splitted_docs)}")
         
         if not splitted_docs:
+            logger.warning(f"0 chunks created for {school} after splitting. Building empty index.")
             create_and_upload_vector_store(get_unique_id(), [], school)
             continue
             
@@ -520,11 +610,15 @@ def rebuild_knowledge_base() -> int:
         total_chunks_processed += len(splitted_docs)
     
     logger.info("Federated knowledge base rebuild complete.")
+    _trigger_user_app_reload()
+    
     return total_chunks_processed
+# --- *** END BUG FIX 2 *** ---
 
 def delete_vector_store() -> bool:
     """
     (DANGEROUS) Deletes ALL indexes AND all source documents.
+    Triggers a reload at the end.
     """
     logger.warning(f"Attempting to clear entire federated knowledge base...")
     try:
@@ -549,6 +643,7 @@ def delete_vector_store() -> bool:
                     raise
                 
         logger.info("Entire federated knowledge base cleared successfully.")
+        _trigger_user_app_reload()
         return True
     except Exception as e:
         logger.error(f"Error clearing knowledge base from S3: {e}", exc_info=True)
