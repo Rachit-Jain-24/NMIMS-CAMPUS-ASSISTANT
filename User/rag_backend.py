@@ -45,8 +45,8 @@ class RAGBackend:
             - "SOC" or "Commerce": return "SOC"
             - "STME" or "Technology Management" or "Engineering": return "STME"
             - "SPTM" or "Pharmacy": return "SPTM"
-        2.  If the query is clearly general (e.g., "holiday list", "campus address", "vice chancellor", "disciplinary committee", "hostel", "ragging policy"), return "general".
-        3.  If the query is ambiguous and could apply to *any* school (e.g., "attendance", "exam dates", "placements", "academic calendar", "srb", "book list", "class timings", "leave rules"), return "AMBIGUOUS".
+        2.  If the query is clearly general (e.g., "holiday list", "campus address", "vice chancellor", "disciplinary committee", "hostel"), return "general".
+        3.  If the query is ambiguous and could apply to *any* school (e.g., "attendance", "exam dates", "placements", "academic calendar", "srb", "book list", "class timings", "leave rules", "ragging policy"), return "AMBIGUOUS".
         
         Return ONLY the matching word from the list.
 

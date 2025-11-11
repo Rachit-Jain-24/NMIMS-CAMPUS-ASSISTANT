@@ -646,5 +646,5 @@ def delete_vector_store() -> bool:
         _trigger_user_app_reload()
         return True
     except Exception as e:
-        logger.error(f"Error clearing knowledge base from S3: {e}", exc_info=True)
+        logger.error(f"Error clearing knowledge base from S3: {e}", exc_info=Example)
         return False
