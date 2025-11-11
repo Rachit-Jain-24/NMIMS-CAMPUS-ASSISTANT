@@ -19,3 +19,5 @@ amazon-textract-caller
 flask-login
 flask-bcrypt
 requests
+psycopg2-binary
+Flask-SQLAlchemy

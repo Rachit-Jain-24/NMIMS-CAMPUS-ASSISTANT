@@ -135,7 +135,7 @@ def list_source_files() -> List[dict]:
                 school, doc_type, display_name = _parse_standardized_filename(filename)
 
                 files.append({
-                    'key': filename, # The full key, e.g., "[GENERAL]_[other]__Nmims_Hostel_Leave.pdf"
+                    'key': filename, # The full key, e.g., "[GENERAL][other]_Nmims_Hostel_Leave.pdf"
                     'display_name': display_name, # The part after __, e.g., "Nmims_Hostel_Leave.pdf"
                     'school': school, # The parsed school, e.g., "general"
                     'doc_type': doc_type, # The parsed type, e.g., "other"
@@ -153,7 +153,7 @@ def upload_source_file(temp_file_path: str, filename: str, school: str, doc_type
     Uploads a single source file to S3 with a standardized, parsable filename.
     Returns the new standardized filename.
     """
-    standardized_filename = f"[{school.upper()}]_[{doc_type.lower()}]__{filename}"
+    standardized_filename = f"[{school.upper()}][{doc_type.lower()}]_{filename}"
     s3_key = f"{SOURCE_DOCS_PREFIX}{standardized_filename}"
     
     try:
@@ -352,32 +352,56 @@ def split_text(pages: List[Document], chunk_size: int, chunk_overlap: int) -> Li
 
 # --- Metadata Parsing ---
 
-# --- *** BUG FIX 1: Robust Filename Parser *** ---
+# --- *** FIX for Parsing BOTH Old and New Filenames *** ---
 def _parse_standardized_filename(filename: str) -> tuple[str, str, str]:
     """
-    Parses a standardized filename, e.g.,
-    [SBM]_[book_list]__SBM_Books_List.xlsx
-    [GENERAL]__Holiday_list.pdf
+    Parses both OLD and NEW standardized filenames.
+    - NEW Format: [SBM][book_list]_MyFile.pdf
+    - OLD Format: [SBM]_[book_list]__MyFile.pdf
+    - OLD Format (General): [GENERAL]__Holiday_list.pdf
     Returns: (school, doc_type, display_name)
     """
-    if not (filename.startswith("[") and "]__" in filename):
-        logger.warning(f"Filename '{filename}' is not standardized. Classifying as 'general'/'other'.")
-        return "general", "other", filename
-
+    
     try:
-        parts = filename.split("]__", 1)
-        display_name = parts[1]
-        tags_part = parts[0].strip("[]") # Removes surrounding '[' and ']' -> "SBM]_[book_list" or "GENERAL"
-        
-        tags = tags_part.split("]_[")
-        
-        school = tags[0].upper()
-        doc_type = "other" # Default if no doc_type is provided
-        
-        if len(tags) > 1:
-            doc_type = tags[1].lower()
+        # --- Try NEW Format First: [SCHOOL][TYPE]_FILENAME ---
+        if filename.startswith("[") and "]_" in filename:
+            parts = filename.rsplit("]_", 1)
+            if len(parts) != 2:
+                raise ValueError("Incomplete new format")
 
-        # Validate school
+            display_name = parts[1]
+            tags_part = parts[0].lstrip("[") # e.g., "SBM][book_list"
+            tags = tags_part.split("][")
+            
+            if len(tags) != 2:
+                 raise ValueError(f"Expected 2 tags in new format, got {len(tags)}")
+
+            school = tags[0].upper()
+            doc_type = tags[1].lower()
+        
+        # --- Try OLD Format Next: [SCHOOL]_[TYPE]__FILENAME or [SCHOOL]__FILENAME ---
+        elif filename.startswith("[") and "]__" in filename:
+            parts = filename.split("]__", 1)
+            if len(parts) != 2:
+                raise ValueError("Incomplete old format")
+
+            display_name = parts[1]
+            tags_part = parts[0].strip("[]") # e.g., "SBM]_[book_list" or "GENERAL"
+            
+            tags = tags_part.split("]_[")
+            
+            school = tags[0].upper()
+            doc_type = "other" # Default
+            
+            if len(tags) > 1:
+                doc_type = tags[1].lower()
+
+        # --- If neither format matches, default ---
+        else:
+            logger.warning(f"Filename '{filename}' is not standardized. Classifying as 'general'/'other'.")
+            return "general", "other", filename
+
+        # --- Validation (applies to both formats) ---
         if school == "GENERAL":
             school = "general"
         
@@ -385,16 +409,16 @@ def _parse_standardized_filename(filename: str) -> tuple[str, str, str]:
             logger.warning(f"Parsed unknown school '{school}' from '{filename}'. Defaulting to 'general'.")
             school = "general"
         
-        # Validate doc_type
         if doc_type not in ALL_DOC_TYPES:
             logger.warning(f"Parsed unknown doc_type '{doc_type}' from '{filename}'. Defaulting to 'other'.")
             doc_type = "other"
             
         return school, doc_type, display_name
+
     except Exception as e:
         logger.error(f"CRITICAL: Failed to parse filename '{filename}': {e}", exc_info=True)
-        return "general", "other", filename
-# --- *** END BUG FIX 1 *** ---
+        return "general", "other", filename # Default on any parsing error
+# --- *** END FIX *** ---
 
 def get_file_metadata(filename: str) -> dict:
     """ Gets metadata from the standardized filename. """
@@ -535,7 +559,7 @@ def create_and_upload_vector_store(request_id: str, documents: List[Document], s
         logger.error(f"Error creating/uploading vector store for {school}: {e}")
         return False
 
-# --- *** BUG FIX 2: Robust Rebuild Function *** ---
+# --- *** Robust Rebuild Function (Handles both formats) *** ---
 def rebuild_knowledge_base() -> int:
     """
     (SLOW) Downloads ALL source files and rebuilds ALL indexes from scratch.
@@ -563,12 +587,10 @@ def rebuild_knowledge_base() -> int:
             filename_key = file['key']
             display_name = file['display_name']
             
-            # --- THIS IS THE FIX ---
-            # Use the *already-parsed* data from list_source_files()
+            # Use the already-parsed data from list_source_files()
             school_context = file.get('school', 'general') # e.g., 'general'
             doc_type = file.get('doc_type', 'other')     # e.g., 'other'
             metadata = {"school": school_context, "doc_type": doc_type}
-            # --- END FIX ---
             
             # This log will now be correct
             logger.info(f"Loading: {display_name} (key: {filename_key}) for school: {school_context}")
@@ -613,7 +635,7 @@ def rebuild_knowledge_base() -> int:
     _trigger_user_app_reload()
     
     return total_chunks_processed
-# --- *** END BUG FIX 2 *** ---
+# --- *** END Robust Rebuild Function *** ---
 
 def delete_vector_store() -> bool:
     """
@@ -646,5 +668,5 @@ def delete_vector_store() -> bool:
         _trigger_user_app_reload()
         return True
     except Exception as e:
-        logger.error(f"Error clearing knowledge base from S3: {e}", exc_info=Example)
+        logger.error(f"Error clearing knowledge base from S3: {e}", exc_info=True)
         return False

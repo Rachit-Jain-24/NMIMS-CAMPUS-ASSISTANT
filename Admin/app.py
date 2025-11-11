@@ -5,7 +5,13 @@ from flask import Flask, render_template, request, flash, redirect, url_for
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
-# --- NEW IMPORTS for Login ---
+# --- NEW IMPORTS for Dashboard ---
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import func
+from models import db, QueryLog  # Assumes models.py is in Admin/
+# --- END NEW IMPORTS ---
+
+# --- IMPORTS for Login ---
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_bcrypt import Bcrypt
 # -----------------------------
@@ -17,26 +23,33 @@ load_dotenv()
 
 # --- Flask App Configuration ---
 app = Flask(__name__, static_folder='static', template_folder='templates')
-
-# SECRET_KEY is read from the .env file (loaded by docker-compose)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'a_very_secret_fallback_key_CHANGE_ME')
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB file upload limit
 
-# --- NEW: Load Admin Credentials ---
-# These are loaded from the root .env file by docker-compose
+# --- NEW: Database Configuration ---
+# Get the database URL from your .env file
+db_uri = os.getenv("DATABASE_URL")
+if not db_uri:
+    logging.warning("DATABASE_URL is not set in .env file. Dashboard will not work.")
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    db.init_app(app)
+# --- END NEW ---
+
+# --- Load Admin Credentials ---
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_HASHED_PASSWORD = os.getenv("ADMIN_HASHED_PASSWORD")
 if not ADMIN_HASHED_PASSWORD:
     logging.warning("ADMIN_HASHED_PASSWORD is not set. Admin login will fail.")
 # ---------------------------------
 
-# --- NEW: Initialize Extensions ---
+# --- Initialize Extensions ---
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
-login_manager.login_view = 'login' # Redirect to /login if not authenticated
+login_manager.login_view = 'login' 
 login_manager.login_message_category = 'info'
 # ---------------------------------
-
 
 ALLOWED_EXTENSIONS = {'pdf', 'csv', 'xlsx', 'docx', 'pptx', 'txt'}
 
@@ -44,7 +57,7 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# --- NEW: User Model and Loader ---
+# --- User Model and Loader ---
 class AdminUser(UserMixin):
     """Simple user class for the Admin."""
     def __init__(self, id):
@@ -59,7 +72,7 @@ def load_user(user_id):
     return None
 # ---------------------------------
 
-# --- NEW: Login and Logout Routes ---
+# --- Login and Logout Routes ---
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -71,23 +84,19 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        # Validate credentials
         if username == ADMIN_USERNAME and ADMIN_HASHED_PASSWORD and bcrypt.check_password_hash(ADMIN_HASHED_PASSWORD, password):
             user = AdminUser(username)
-            login_user(user, remember=True) # 'remember=True' adds a secure cookie
+            login_user(user, remember=True) 
             flash('Logged in successfully.', 'success')
-            
-            # Redirect to the page they were trying to access, or index
             next_page = request.args.get('next')
             return redirect(next_page or url_for('index'))
         else:
             flash('Login failed. Please check username and password.', 'danger')
             
-    # This will render Admin/templates/login.html (which you need to create)
     return render_template('login.html') 
 
 @app.route('/logout')
-@login_required # Must be logged in to log out
+@login_required 
 def logout():
     """Handles logging out the user."""
     logout_user()
@@ -96,10 +105,10 @@ def logout():
 # -----------------------------------
 
 
-# --- Routes (Now Protected) ---
+# --- Main Admin Routes ---
 
 @app.route('/', methods=['GET'])
-@login_required  # <-- PROTECTED
+@login_required
 def index():
     """
     Handles displaying the main page and listing the files.
@@ -128,14 +137,92 @@ def index():
         doc_types=bp.ALL_DOC_TYPES
     )
 
+# --- NEW: Analytics Dashboard Route ---
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    if not db_uri:
+        flash('Database not configured. Cannot load dashboard.', 'danger')
+        return redirect(url_for('index'))
+
+    try:
+        # --- 1. KPI Cards ---
+        total_queries = db.session.query(QueryLog).count()
+        total_failures = db.session.query(QueryLog).filter(
+            (QueryLog.was_ambiguous == True) | 
+            (QueryLog.was_no_docs == True) | 
+            (QueryLog.feedback == -1)
+        ).count()
+        
+        failure_rate = (total_failures / total_queries) * 100 if total_queries > 0 else 0
+        
+        good_feedback_count = db.session.query(QueryLog).filter(QueryLog.feedback == 1).count()
+        total_feedback_count = db.session.query(QueryLog).filter(QueryLog.feedback != 0).count()
+        good_feedback_rate = (good_feedback_count / total_feedback_count) * 100 if total_feedback_count > 0 else 0
+
+        # --- 2. Top Queries Table ---
+        top_queries = db.session.query(
+            QueryLog.query_text, 
+            func.count(QueryLog.query_text).label('count')
+        ).group_by(QueryLog.query_text).order_by(func.count(QueryLog.query_text).desc()).limit(10).all()
+
+        # --- 3. Failed Queries Table ---
+        failed_queries = db.session.query(QueryLog).filter(
+            (QueryLog.was_ambiguous == True) | 
+            (QueryLog.was_no_docs == True) | 
+            (QueryLog.feedback == -1)
+        ).order_by(QueryLog.timestamp.desc()).limit(20).all()
+
+        # --- 4. Queries by School Chart ---
+        queries_by_school = db.session.query(
+            QueryLog.classified_context,
+            func.count(QueryLog.classified_context).label('count')
+        ).group_by(QueryLog.classified_context).order_by(func.count(QueryLog.classified_context).desc()).all()
+
+        school_chart_labels = [row.classified_context for row in queries_by_school]
+        school_chart_data = [row.count for row in queries_by_school]
+
+        # --- 5. Query Status Chart ---
+        ambiguous_count = db.session.query(QueryLog).filter(QueryLog.was_ambiguous == True).count()
+        no_docs_count = db.session.query(QueryLog).filter(QueryLog.was_no_docs == True).count()
+        bad_feedback_count = db.session.query(QueryLog).filter(QueryLog.feedback == -1).count()
+        
+        # Calculate successful queries (total minus all *non-disliked* failures)
+        # A query can be successful AND disliked.
+        total_non_feedback_failures = ambiguous_count + no_docs_count
+        successful_queries = total_queries - total_non_feedback_failures
+
+        status_chart_labels = ['Successful', 'Disliked', 'Ambiguous', 'No Docs Found']
+        # We show bad_feedback_count, but don't subtract it, as a "successful" query can be disliked.
+        # This makes the pie chart more intuitive.
+        status_chart_data = [successful_queries - bad_feedback_count, bad_feedback_count, ambiguous_count, no_docs_count]
+        
+        return render_template(
+            'dashboard.html',
+            total_queries=total_queries,
+            total_failures=total_failures,
+            failure_rate=failure_rate,
+            good_feedback_rate=good_feedback_rate,
+            top_queries=top_queries,
+            failed_queries=failed_queries,
+            school_chart_labels=school_chart_labels,
+            school_chart_data=school_chart_data,
+            status_chart_labels=status_chart_labels,
+            status_chart_data=status_chart_data
+        )
+
+    except Exception as e:
+        logger.error(f"Error loading dashboard: {e}", exc_info=True)
+        flash(f'Error loading dashboard: {e}', 'danger')
+        return redirect(url_for('index'))
+# --- END NEW ROUTE ---
+
 
 @app.route('/upload', methods=['POST'])
-@login_required  # <-- PROTECTED
+@login_required
 def upload_file_router():
     """
-    --- *** NEW SMART UPLOAD LOGIC *** ---
     Handles uploading files AND incrementally updating the vector store.
-    This is now the FAST path.
     """
     school_context = request.form.get('school_context')
     doc_type = request.form.get('doc_type')
@@ -164,16 +251,13 @@ def upload_file_router():
                     file.save(temp_file_path)
                     bp.logger.info(f"File saved to temp path: {temp_file_path}")
                     
-                    # 1. Upload the raw file to S3 (for backup and rebuilds)
                     standardized_filename = bp.upload_source_file(temp_file_path, filename, school_context, doc_type)
                     if not standardized_filename:
                          raise Exception("S3 upload failed.")
 
-                    # 2. Add the file to the live knowledge base (fast, incremental)
-                    # --- SOLVED: Pass S3 key and display name ---
                     chunks_added = bp.add_file_to_knowledge_base(
-                        standardized_filename, # The full S3 key
-                        filename,              # The original display name
+                        standardized_filename, 
+                        filename,              
                         school_context, 
                         doc_type
                     )
@@ -203,11 +287,10 @@ def upload_file_router():
 
 
 @app.route('/rebuild', methods=['POST'])
-@login_required  # <-- PROTECTED
+@login_required
 def rebuild_knowledge_base_router():
     """
     (SLOW) Handles the request to rebuild the vector store from all source files.
-    This is now only needed after deleting files.
     """
     try:
         bp.logger.info("Rebuild request received. Starting...")
@@ -221,7 +304,7 @@ def rebuild_knowledge_base_router():
 
 
 @app.route('/delete', methods=['POST'])
-@login_required  # <-- PROTECTED
+@login_required
 def delete_file_router():
     """
     Handles the request to delete a single source file.
@@ -244,7 +327,7 @@ def delete_file_router():
 
 
 @app.route('/clear', methods=['POST'])
-@login_required  # <-- PROTECTED
+@login_required
 def clear_knowledge_base_router():
     """
     (DANGEROUS) Handles the request to delete ALL federated vector stores AND all source files.

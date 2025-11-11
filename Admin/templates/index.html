@@ -60,16 +60,22 @@
         </a>
       </div>
   
-      <!-- ======== MODIFIED SECTION ======== -->
       <div class="flex items-center gap-6">
-        
         <!-- Welcome message, hidden on small screens -->
         <span class="text-sm font-medium text-gray-700 hidden sm:block">
           Welcome, <strong class="font-bold">{{ current_user.username }}</strong>
         </span>
         
+        <!-- Navigation Links -->
+        <a href="{{ url_for('index') }}" class="text-gray-700 font-semibold hover:text-[#d2232a] transition duration-300">
+          <strong>Knowledge Base</strong>
+        </a>
+        <a href="{{ url_for('dashboard') }}" class="text-gray-700 font-medium hover:text-[#d2232a] transition duration-300">
+          Analytics
+        </a>
+        
         <!-- Logout button -->
-        <a href="{{ url_for('logout') }}" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300 ease-in-out shadow-lg">
+        <a href="{{ url_for('logout') }}" class="bg-[#d2232a] text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 transition duration-300 ease-in-out shadow-lg">
           Logout
         </a>
   
@@ -78,9 +84,7 @@
             <img class="h-12" src="{{ url_for('static', filename='media/logo.png') }}" alt="NMIMS Logo">
           </a>
         </div>
-  
       </div>
-      <!-- ================================== -->
     </nav>
   </header>
 
