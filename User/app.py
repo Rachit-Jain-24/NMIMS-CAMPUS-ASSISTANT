@@ -20,7 +20,7 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='static', template_folder='templates')
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+CORS(app, resources={r"/api/": {"origins": ""}})
 
 # --- AWS and Model Configuration ---
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
@@ -32,6 +32,9 @@ BUCKET_NAME = os.getenv("BUCKET_NAME")
 REFRESH_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "default_secret_key_fallback")
 if REFRESH_SECRET_KEY == "default_secret_key_fallback":
     logger.warning("FLASK_SECRET_KEY is not set. Refresh endpoint is using a default key.")
+
+# --- Feedback persistence configuration ---
+FEEDBACK_FILE = os.getenv("FEEDBACK_FILE", os.path.join(os.path.dirname(__file__), "feedback.jsonl"))
 
 if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BUCKET_NAME]):
     logger.critical("Missing AWS config. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BUCKET_NAME in environment/.env")
@@ -96,19 +99,35 @@ def transcribe_audio():
         if 'audio_data' not in data:
             return jsonify({"error": "No audio data provided."}), 400
         
-        header, encoded = data['audio_data'].split(',', 1)
-        audio_bytes = base64.b64decode(encoded)
+        # Expect a data URL, e.g. "data:audio/webm;base64,<BASE64>"
+        try:
+            header, encoded = data['audio_data'].split(',', 1)
+        except ValueError:
+            return jsonify({"error": "Malformed audio data."}), 400
 
-        with tempfile.NamedTemporaryFile(delete=True, suffix=".webm") as temp_audio:
-            temp_audio.write(audio_bytes)
-            temp_audio.flush()
-            
-            logger.info(f"Transcribing temporary audio file: {temp_audio.name}")
-            result = whisper_model.transcribe(temp_audio.name)
+        try:
+            audio_bytes = base64.b64decode(encoded)
+        except Exception:
+            return jsonify({"error": "Invalid base64 audio payload."}), 400
+
+        # Windows NOTE: NamedTemporaryFile keeps the handle open -> ffmpeg can't read (Permission denied)
+        # Use mkstemp, close handle, write bytes, then let ffmpeg read freely.
+        fd, temp_path = tempfile.mkstemp(suffix=".webm")
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                f.write(audio_bytes)
+            logger.info(f"Transcribing audio file (size={len(audio_bytes)} bytes): {temp_path}")
+            # Call whisper; if you want faster latency consider tiny model
+            result = whisper_model.transcribe(temp_path)
             transcript = result.get("text", "").strip()
-            
             logger.info(f"Transcription result: {transcript}")
             return jsonify({"transcript": transcript})
+        finally:
+            # Ensure cleanup even if transcription fails
+            try:
+                os.remove(temp_path)
+            except OSError as rm_err:
+                logger.warning(f"Could not remove temp audio file {temp_path}: {rm_err}")
 
     except Exception as e:
         logger.exception("Error during transcription")
@@ -128,7 +147,8 @@ def chat():
         data = request.json
         query = data.get('query')
         language_code = data.get('language', 'en') 
-        chat_history = data.get('history', []) 
+        chat_history = data.get('history', [])
+        user_name = data.get('user_name')  # Track user's name if provided
 
         if not query:
             return jsonify({'answer': 'No query provided.', 'sources': [], 'request_id': 'error', 'confidence': 0.0}), 400
@@ -159,11 +179,14 @@ def chat():
         
         response_data = rag_system.get_rag_response(
             translated_query, 
-            chat_history=translated_history
+            chat_history=translated_history,
+            user_name=user_name
         )
         
         answer_text = response_data.get("answer", "An error occurred.")
         sources = response_data.get("sources", [])
+        conversation_type = response_data.get("conversation_type")
+        captured_name = response_data.get("user_name")
         
         try:
             if language_code != 'en':
@@ -175,12 +198,20 @@ def chat():
             logger.error(f"Translation from English failed: {e}. Sending English answer.")
             final_answer = answer_text
 
-        return jsonify({
+        response_payload = {
             'answer': final_answer,
             'sources': sources,
             'request_id': f"req_{uuid.uuid4()}", 
-            'confidence': 1.0 
-        })
+            'confidence': 1.0
+        }
+        
+        # Include conversation metadata if present
+        if conversation_type:
+            response_payload['conversation_type'] = conversation_type
+        if captured_name:
+            response_payload['user_name'] = captured_name
+
+        return jsonify(response_payload)
 
     except Exception as e:
         logger.exception("Error in /api/chat endpoint")
@@ -188,9 +219,27 @@ def chat():
         
 @app.route('/api/feedback', methods=['POST'])
 def feedback():
-    data = request.json
-    logger.info(f"Feedback received: {data}")
-    return jsonify({"status": "success", "message": "Feedback received"}), 200
+    data = request.json or {}
+    # Enrich with server-side metadata
+    record = {
+        "id": f"fb_{uuid.uuid4()}",
+        "user_query": data.get("query"),
+        "assistant_answer": data.get("answer"),
+        "rating": data.get("rating"),  # e.g., up/down or 1-5
+        "comment": data.get("comment"),
+        "sources": data.get("sources", []),
+        "created_at": _import_('datetime').datetime.utcnow().isoformat() + "Z"
+    }
+    try:
+        # Append as JSONL for easy later analysis
+        with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
+            import json
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        logger.info(f"Feedback stored to {FEEDBACK_FILE}: {record}")
+        return jsonify({"status": "success", "message": "Feedback recorded"}), 200
+    except Exception as e:
+        logger.exception("Failed to persist feedback")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/sources', methods=['GET'])
 def get_source():

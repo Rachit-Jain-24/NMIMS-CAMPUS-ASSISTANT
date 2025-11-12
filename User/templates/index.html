@@ -264,6 +264,7 @@
             messages: [],
             queryCache: new Map(),
             currentUserId: null,
+            userName: null, // Track user's name for personalization
             focusTrap: null,
             // --- NEW: MediaRecorder (MIC FIX) ---
             mediaRecorder: null,
@@ -484,8 +485,8 @@
                 const msgElement = createMessageElement(msg);
                 elements.messagesContainer.appendChild(msgElement);
 
-                // --- FIX 3: Check *last message only* for quick replies ---
-                // This logic ensures replies only show with the *first* welcome message
+                // --- FIX 3: Check last message only for quick replies ---
+                // This logic ensures replies only show with the first welcome message
                 // and not after every single bot message.
                 if (index === 0 && msg.type === 'bot' && state.messages.length === 1) {
                      elements.messagesContainer.appendChild(renderQuickReplies());
@@ -503,10 +504,10 @@
 
         function simpleMarkdown(text) {
             let html = escapeHTML(text);
-            // Bold: **text**
-            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            // Bold: *text*
+            html = html.replace(/\\(.?)\\*/g, '<strong>$1</strong>');
             // Lists: - item or * item
-            html = html.replace(/^\s*[\-\*]\s+(.*)$/gm, '<ul class="list-disc list-outside pl-5"><li>$1</li></ul>');
+            html = html.replace(/^\s*[-*]\s+(.*)$/gm, '<ul class="list-disc list-outside pl-5"><li>$1</li></ul>');
             html = html.replace(/<\/ul>\s*<ul class="list-disc list-outside pl-5">/g, '');
             // Numbered lists: 1. item
             html = html.replace(/^\s*\d+\.\s+(.*)$/gm, '<ol class="list-decimal list-outside pl-5"><li>$1</li></ol>');
@@ -558,7 +559,7 @@
                 if (msg.confidence && msg.confidence < 0.6) {
                     const badge = document.createElement('div');
                     badge.className = 'nmims-confidence-badge mt-2 inline-block bg-yellow-100 text-yellow-800 border border-yellow-300 px-2 py-0.5 rounded-full text-xs font-medium';
-                    badge.textContent = '⚠️ Low confidence answer';
+                    badge.textContent = '⚠ Low confidence answer';
                     bubble.appendChild(badge);
                 }
 
@@ -770,6 +771,7 @@
                         user_id: state.currentUserId,
                         query: query,
                         language: selectedLang,
+                        user_name: state.userName, // Send user's name if captured
                         history: chatHistory // <-- FIX: Send chat history to backend
                     }),
                     signal: controller.signal
@@ -803,7 +805,7 @@
                 if (isActuallyOffline) {
                     errorText = '🔌 You appear to be offline. Your question has been saved.';
                 } else if (isTimeout) {
-                    errorText = '⏱️ The request timed out. The server might be busy. Please try again.';
+                    errorText = '⏱ The request timed out. The server might be busy. Please try again.';
                 } else {
                     errorText = '❌ Sorry, something went wrong. Please try again.';
                 }
@@ -834,10 +836,16 @@
                 confidence: response.confidence,
                 request_id: response.request_id || generateRequestId()
             };
+            
+            // Check if backend captured user's name
+            if (response.user_name) {
+                state.userName = response.user_name;
+                console.log('[NMIMS Chat] User name captured:', state.userName);
+            }
 
             // This logic is now handled on the backend based on confidence/sources
             // if (response.confidence < 0.6 || (response.sources.length === 0 && isPolicyQuestion(originalQuery))) {
-            //     botMsg.text += "\n\n⚠️ I'm not entirely sure about this answer. For accurate information, please contact Student Affairs: studentaffairs@nmims.edu";
+            //     botMsg.text += "\n\n⚠ I'm not entirely sure about this answer. For accurate information, please contact Student Affairs: studentaffairs@nmims.edu";
             // }
 
             state.messages.push(botMsg);

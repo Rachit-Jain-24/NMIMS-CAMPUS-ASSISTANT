@@ -12,3 +12,5 @@ deep_translator
 openai-whisper
 sounddevice
 numpy
+psycopg2-binary
+Flask-SQLAlchemy
