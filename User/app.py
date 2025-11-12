@@ -13,6 +13,12 @@ import whisper
 import tempfile
 import base64
 
+# --- NEW DB IMPORTS ---
+from flask_sqlalchemy import SQLAlchemy
+from models import db, QueryLog # Assumes models.py defines db and QueryLog
+# --- END NEW DB IMPORTS ---
+
+
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -21,6 +27,20 @@ load_dotenv()
 # Initialize Flask app
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app, resources={r"/api/": {"origins": ""}})
+
+# --- NEW: Database Configuration ---
+db_uri = os.getenv("DATABASE_URL")
+if not db_uri:
+    logger.warning("DATABASE_URL is not set in .env file. Query logging will not work.")
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    # --- FIX 2: Added pool recycling to prevent 'Connection timed out' ---
+    app.config['SQLALCHEMY_POOL_RECYCLE'] = 280 
+    # --- END FIX 2 ---
+    db.init_app(app)
+# --- END NEW ---
+
 
 # --- AWS and Model Configuration ---
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
@@ -32,9 +52,6 @@ BUCKET_NAME = os.getenv("BUCKET_NAME")
 REFRESH_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "default_secret_key_fallback")
 if REFRESH_SECRET_KEY == "default_secret_key_fallback":
     logger.warning("FLASK_SECRET_KEY is not set. Refresh endpoint is using a default key.")
-
-# --- Feedback persistence configuration ---
-FEEDBACK_FILE = os.getenv("FEEDBACK_FILE", os.path.join(os.path.dirname(__file__), "feedback.jsonl"))
 
 if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BUCKET_NAME]):
     logger.critical("Missing AWS config. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BUCKET_NAME in environment/.env")
@@ -99,7 +116,6 @@ def transcribe_audio():
         if 'audio_data' not in data:
             return jsonify({"error": "No audio data provided."}), 400
         
-        # Expect a data URL, e.g. "data:audio/webm;base64,<BASE64>"
         try:
             header, encoded = data['audio_data'].split(',', 1)
         except ValueError:
@@ -110,20 +126,16 @@ def transcribe_audio():
         except Exception:
             return jsonify({"error": "Invalid base64 audio payload."}), 400
 
-        # Windows NOTE: NamedTemporaryFile keeps the handle open -> ffmpeg can't read (Permission denied)
-        # Use mkstemp, close handle, write bytes, then let ffmpeg read freely.
         fd, temp_path = tempfile.mkstemp(suffix=".webm")
         try:
             with os.fdopen(fd, 'wb') as f:
                 f.write(audio_bytes)
             logger.info(f"Transcribing audio file (size={len(audio_bytes)} bytes): {temp_path}")
-            # Call whisper; if you want faster latency consider tiny model
             result = whisper_model.transcribe(temp_path)
             transcript = result.get("text", "").strip()
             logger.info(f"Transcription result: {transcript}")
             return jsonify({"transcript": transcript})
         finally:
-            # Ensure cleanup even if transcription fails
             try:
                 os.remove(temp_path)
             except OSError as rm_err:
@@ -148,7 +160,7 @@ def chat():
         query = data.get('query')
         language_code = data.get('language', 'en') 
         chat_history = data.get('history', [])
-        user_name = data.get('user_name')  # Track user's name if provided
+        user_name = data.get('user_name') 
 
         if not query:
             return jsonify({'answer': 'No query provided.', 'sources': [], 'request_id': 'error', 'confidence': 0.0}), 400
@@ -187,6 +199,28 @@ def chat():
         sources = response_data.get("sources", [])
         conversation_type = response_data.get("conversation_type")
         captured_name = response_data.get("user_name")
+
+        # --- FIX 1: Removed 'req_' prefix. UUID is exactly 36 chars. ---
+        req_id = str(uuid.uuid4())
+        # --- END FIX 1 ---
+
+        if db_uri:
+            try:
+                new_log = QueryLog(
+                    id=req_id,
+                    query_text=translated_query,
+                    response_text=answer_text, 
+                    classified_context=response_data.get("classified_context", "unknown"),
+                    was_ambiguous=response_data.get("was_ambiguous", False),
+                    was_no_docs=response_data.get("was_no_docs", False),
+                    feedback=0 
+                )
+                db.session.add(new_log)
+                db.session.commit()
+                logger.info(f"Query logged to DB with id: {req_id}")
+            except Exception as e:
+                logger.error(f"Failed to log query to DB: {e}", exc_info=True)
+                db.session.rollback()
         
         try:
             if language_code != 'en':
@@ -201,11 +235,10 @@ def chat():
         response_payload = {
             'answer': final_answer,
             'sources': sources,
-            'request_id': f"req_{uuid.uuid4()}", 
+            'request_id': req_id, 
             'confidence': 1.0
         }
         
-        # Include conversation metadata if present
         if conversation_type:
             response_payload['conversation_type'] = conversation_type
         if captured_name:
@@ -219,26 +252,44 @@ def chat():
         
 @app.route('/api/feedback', methods=['POST'])
 def feedback():
+    """
+    REWRITTEN: This endpoint now updates the PostgreSQL database.
+    """
     data = request.json or {}
-    # Enrich with server-side metadata
-    record = {
-        "id": f"fb_{uuid.uuid4()}",
-        "user_query": data.get("query"),
-        "assistant_answer": data.get("answer"),
-        "rating": data.get("rating"),  # e.g., up/down or 1-5
-        "comment": data.get("comment"),
-        "sources": data.get("sources", []),
-        "created_at": _import_('datetime').datetime.utcnow().isoformat() + "Z"
-    }
+    request_id = data.get("request_id") 
+    rating_str = data.get("rating")     
+    comment = data.get("comment", "") 
+
+    if not request_id:
+        logger.warning("Feedback request missing request_id")
+        return jsonify({"status": "error", "message": "Missing request_id"}), 400
+    
+    if not db_uri:
+        logger.error("Feedback request failed: Database not configured")
+        return jsonify({"status": "error", "message": "Database not configured"}), 500
+
+    feedback_value = 0
+    if rating_str == "up":
+        feedback_value = 1
+    elif rating_str == "down":
+        feedback_value = -1
+
     try:
-        # Append as JSONL for easy later analysis
-        with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
-            import json
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        logger.info(f"Feedback stored to {FEEDBACK_FILE}: {record}")
-        return jsonify({"status": "success", "message": "Feedback recorded"}), 200
+        log_entry = db.session.query(QueryLog).filter_by(id=request_id).first()
+        
+        if log_entry:
+            log_entry.feedback = feedback_value
+            log_entry.comment = comment
+            db.session.commit()
+            logger.info(f"Feedback stored to DB for request_id: {request_id}")
+            return jsonify({"status": "success", "message": "Feedback recorded"}), 200
+        else:
+            logger.warning(f"Feedback received for unknown request_id: {request_id}")
+            return jsonify({"status": "error", "message": "Invalid request_id"}), 404
+            
     except Exception as e:
-        logger.exception("Failed to persist feedback")
+        logger.exception("Failed to persist feedback to DB")
+        db.session.rollback()
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/sources', methods=['GET'])
@@ -264,24 +315,20 @@ def get_source():
         logger.exception(f"Error retrieving snippet for {file_id}")
         return jsonify({"snippet": f"An error occurred while fetching the source: {str(e)}"}), 500
 
-# --- *** ADD THIS NEW ROUTE *** ---
 @app.route('/api/refresh-knowledge-base', methods=['POST'])
 def refresh_knowledge_base():
     """
     A secure endpoint to trigger a reload of the in-memory vector stores.
     """
-    # 1. Check for the secret key
     auth_header = request.headers.get("Authorization")
     if not auth_header or auth_header != REFRESH_SECRET_KEY:
         logger.warning("Unauthorized attempt to refresh knowledge base.")
         return jsonify({"status": "error", "message": "Unauthorized"}), 401
     
-    # 2. Check if the RAG system is initialized
     if not rag_system:
         logger.error("Refresh triggered, but RAG system is not initialized.")
         return jsonify({"status": "error", "message": "RAG system not initialized"}), 500
         
-    # 3. Trigger the reload
     try:
         logger.info("Authorized refresh request received. Reloading stores...")
         success = rag_system.reload_all_stores()
@@ -294,7 +341,6 @@ def refresh_knowledge_base():
     except Exception as e:
         logger.exception("Exception during knowledge base refresh.")
         return jsonify({"status": "error", "message": str(e)}), 500
-# --- *** END OF NEW ROUTE *** ---
 
 
 if __name__ == '__main__':

@@ -27,13 +27,15 @@ app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'a_very_secret_fallback
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB file upload limit
 
 # --- NEW: Database Configuration ---
-# Get the database URL from your .env file
 db_uri = os.getenv("DATABASE_URL")
 if not db_uri:
     logging.warning("DATABASE_URL is not set in .env file. Dashboard will not work.")
 else:
     app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    # --- THIS IS THE FIX for 'EOF detected' ---
+    app.config['SQLALCHEMY_POOL_RECYCLE'] = 280 # Recycle connections every 280s
+    # --- END FIX ---
     db.init_app(app)
 # --- END NEW ---
 
@@ -187,14 +189,10 @@ def dashboard():
         no_docs_count = db.session.query(QueryLog).filter(QueryLog.was_no_docs == True).count()
         bad_feedback_count = db.session.query(QueryLog).filter(QueryLog.feedback == -1).count()
         
-        # Calculate successful queries (total minus all *non-disliked* failures)
-        # A query can be successful AND disliked.
         total_non_feedback_failures = ambiguous_count + no_docs_count
         successful_queries = total_queries - total_non_feedback_failures
 
         status_chart_labels = ['Successful', 'Disliked', 'Ambiguous', 'No Docs Found']
-        # We show bad_feedback_count, but don't subtract it, as a "successful" query can be disliked.
-        # This makes the pie chart more intuitive.
         status_chart_data = [successful_queries - bad_feedback_count, bad_feedback_count, ambiguous_count, no_docs_count]
         
         return render_template(
@@ -212,7 +210,7 @@ def dashboard():
         )
 
     except Exception as e:
-        logger.error(f"Error loading dashboard: {e}", exc_info=True)
+        app.logger.error(f"Error loading dashboard: {e}", exc_info=True)
         flash(f'Error loading dashboard: {e}', 'danger')
         return redirect(url_for('index'))
 # --- END NEW ROUTE ---

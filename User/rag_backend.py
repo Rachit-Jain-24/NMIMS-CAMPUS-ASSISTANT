@@ -502,6 +502,8 @@ class RAGBackend:
         """
         The main RAG pipeline: Classify -> Retrieve -> Generate
         Includes conversational handling for greetings, appreciation, and farewells.
+        
+        *** UPDATED to return flags for dashboard logging. ***
         """
         try:
             # 0. Handle conversational patterns first
@@ -512,21 +514,30 @@ class RAGBackend:
                 return {
                     "answer": "Hello! Welcome to SVKM's NMIMS Hyderabad Campus Assistant. I'm here to help you with information about our campus, policies, and programs.\n\nMay I know your name? (You can share your name or type 'skip' if you prefer not to)",
                     "sources": [],
-                    "conversation_type": "greeting"
+                    "conversation_type": "greeting",
+                    "classified_context": "conversational",
+                    "was_ambiguous": False,
+                    "was_no_docs": False
                 }
             elif self._is_greeting(query) and user_name:
                 # Greeting with known name
                 return {
                     "answer": f"Hello {user_name}! How can I assist you today with information about NMIMS Hyderabad?",
                     "sources": [],
-                    "conversation_type": "greeting"
+                    "conversation_type": "greeting",
+                    "classified_context": "conversational",
+                    "was_ambiguous": False,
+                    "was_no_docs": False
                 }
             elif self._is_greeting(query):
                 # Greeting without name (not first time)
                 return {
                     "answer": "Hello again! How can I help you with your NMIMS queries?",
                     "sources": [],
-                    "conversation_type": "greeting"
+                    "conversation_type": "greeting",
+                    "classified_context": "conversational",
+                    "was_ambiguous": False,
+                    "was_no_docs": False
                 }
             
             # Check if user is providing their name (after initial greeting)
@@ -537,13 +548,19 @@ class RAGBackend:
                         "answer": f"Nice to meet you, {extracted_name}! I'm here to help you with any questions about NMIMS Hyderabad Campus. Feel free to ask me about academic calendars, policies, programs, facilities, or anything else related to our campus.",
                         "sources": [],
                         "conversation_type": "name_captured",
-                        "user_name": extracted_name
+                        "user_name": extracted_name,
+                        "classified_context": "conversational",
+                        "was_ambiguous": False,
+                        "was_no_docs": False
                     }
                 elif self._declines_name(query):
                     return {
                         "answer": "No problem! I'm here to help you with any questions about NMIMS Hyderabad Campus. What would you like to know?",
                         "sources": [],
-                        "conversation_type": "name_declined"
+                        "conversation_type": "name_declined",
+                        "classified_context": "conversational",
+                        "was_ambiguous": False,
+                        "was_no_docs": False
                     }
             
             # Check for appreciation
@@ -558,7 +575,10 @@ class RAGBackend:
                 return {
                     "answer": appreciation_responses[response_idx],
                     "sources": [],
-                    "conversation_type": "appreciation"
+                    "conversation_type": "appreciation",
+                    "classified_context": "conversational",
+                    "was_ambiguous": False,
+                    "was_no_docs": False
                 }
             
             # Check for farewells
@@ -572,7 +592,10 @@ class RAGBackend:
                 return {
                     "answer": farewell_responses[response_idx],
                     "sources": [],
-                    "conversation_type": "farewell"
+                    "conversation_type": "farewell",
+                    "classified_context": "conversational",
+                    "was_ambiguous": False,
+                    "was_no_docs": False
                 }
             
             # 1. Check if query mentions other institutions - reject immediately
@@ -580,7 +603,10 @@ class RAGBackend:
                 logger.info(f"Query mentions other institution (not NMIMS): {query}")
                 return {
                     "answer": "I'm sorry, I can only answer questions about SVKM's NMIMS Hyderabad Campus. I don't have information about other institutions.",
-                    "sources": []
+                    "sources": [],
+                    "classified_context": "OOS", # Out of Scope
+                    "was_ambiguous": False,
+                    "was_no_docs": True # Treat as a failure
                 }
             
             # 2. Try deterministic school extraction first (no LLM)
@@ -644,7 +670,10 @@ class RAGBackend:
                 logger.info(f"Ambiguous query detected: {query_to_search}")
                 return {
                     "answer": AMBIGUITY_RESPONSE,
-                    "sources": []
+                    "sources": [],
+                    "classified_context": "AMBIGUOUS",
+                    "was_ambiguous": True,
+                    "was_no_docs": False
                 }
 
             # 4. --- FEDERATED SEARCH STRATEGY ---
@@ -691,7 +720,13 @@ class RAGBackend:
             
             if not stores_to_search:
                  logger.warning(f"No vector stores found for context '{school_context}'.")
-                 return {"answer": "I'm sorry, I don't have that specific information in my knowledge base.", "sources": []}
+                 return {
+                     "answer": "I'm sorry, I don't have that specific information in my knowledge base.", 
+                     "sources": [],
+                     "classified_context": school_context,
+                     "was_ambiguous": False,
+                     "was_no_docs": True
+                 }
 
             for store_name, store in stores_to_search.items():
                 logger.info(f"Searching index '{store_name}' for: '{query_to_search}'")
@@ -703,7 +738,13 @@ class RAGBackend:
 
             if not all_docs:
                 logger.warning(f"No documents found in '{school_context}' or 'general' for query: '{query_to_search}'")
-                return {"answer": "I'm sorry, I don't have that specific information in my knowledge base.", "sources": []}
+                return {
+                    "answer": "I'm sorry, I don't have that specific information in my knowledge base.", 
+                    "sources": [],
+                    "classified_context": school_context,
+                    "was_ambiguous": False,
+                    "was_no_docs": True
+                }
 
             # 5. Build context and metadata
             context = ""
@@ -738,11 +779,23 @@ class RAGBackend:
             
             answer_text = re.sub(r'^\s*Assistant:\s*', '', answer_text).strip()
             
-            return {"answer": answer_text, "sources": sources}
+            return {
+                "answer": answer_text, 
+                "sources": sources,
+                "classified_context": school_context,
+                "was_ambiguous": False,
+                "was_no_docs": False
+            }
 
         except Exception as e:
             logger.error(f"RAG Error: {e}", exc_info=True)
-            return {"answer": "I encountered an error while processing your request. Please try again.", "sources": []}
+            return {
+                "answer": "I encountered an error while processing your request. Please try again.", 
+                "sources": [],
+                "classified_context": "error",
+                "was_ambiguous": False,
+                "was_no_docs": True # Treat errors as a failure
+            }
 
     def get_source_snippet(self, source_file: str, page_num: str) -> str:
         """

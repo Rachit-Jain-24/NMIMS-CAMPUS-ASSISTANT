@@ -352,49 +352,57 @@ def split_text(pages: List[Document], chunk_size: int, chunk_overlap: int) -> Li
 
 # --- Metadata Parsing ---
 
-# --- *** FIX for Parsing BOTH Old and New Filenames *** ---
+# --- *** NEW ROBUST PARSING FUNCTION (FIX for Error 2) *** ---
 def _parse_standardized_filename(filename: str) -> tuple[str, str, str]:
     """
-    Parses both OLD and NEW standardized filenames.
+    Parses both NEW and OLD standardized filenames robustly.
     - NEW Format: [SBM][book_list]_MyFile.pdf
     - OLD Format: [SBM]_[book_list]__MyFile.pdf
     - OLD Format (General): [GENERAL]__Holiday_list.pdf
     Returns: (school, doc_type, display_name)
     """
     
+    school, doc_type, display_name = "general", "other", filename
+
     try:
-        # --- Try NEW Format First: [SCHOOL][TYPE]_FILENAME ---
-        if filename.startswith("[") and "]_" in filename:
-            parts = filename.rsplit("]_", 1)
-            if len(parts) != 2:
-                raise ValueError("Incomplete new format")
-
-            display_name = parts[1]
-            tags_part = parts[0].lstrip("[") # e.g., "SBM][book_list"
-            tags = tags_part.split("][")
-            
-            if len(tags) != 2:
-                 raise ValueError(f"Expected 2 tags in new format, got {len(tags)}")
-
-            school = tags[0].upper()
-            doc_type = tags[1].lower()
-        
-        # --- Try OLD Format Next: [SCHOOL]_[TYPE]__FILENAME or [SCHOOL]__FILENAME ---
-        elif filename.startswith("[") and "]__" in filename:
+        # --- Try OLD Format First: [SCHOOL]_[TYPE]__FILENAME or [SCHOOL]__FILENAME ---
+        # This format uses "__" as the final delimiter
+        if filename.startswith("[") and "]__" in filename:
             parts = filename.split("]__", 1)
-            if len(parts) != 2:
-                raise ValueError("Incomplete old format")
+            if len(parts) == 2:
+                display_name = parts[1]
+                tags_part = parts[0].strip("[]") # e.g., "SBM]_[book_list" or "GENERAL"
+                
+                if "]_[" in tags_part:
+                    # Format: [SBM]_[book_list]
+                    tag_parts = tags_part.split("]_[")
+                    school = tag_parts[0].upper()
+                    doc_type = tag_parts[1].lower()
+                else:
+                    # Format: [GENERAL]
+                    school = tags_part.upper()
+                    doc_type = "other" # Default for this old format
+            
+                # logger.info(f"Parsed OLD format: {school}, {doc_type}, {display_name}")
 
-            display_name = parts[1]
-            tags_part = parts[0].strip("[]") # e.g., "SBM]_[book_list" or "GENERAL"
-            
-            tags = tags_part.split("]_[")
-            
-            school = tags[0].upper()
-            doc_type = "other" # Default
-            
-            if len(tags) > 1:
-                doc_type = tags[1].lower()
+        # --- Try NEW Format Second: [SCHOOL][TYPE]_FILENAME ---
+        # This format uses "]_" as the final delimiter
+        elif filename.startswith("[") and "]_" in filename:
+            parts = filename.rsplit("]_", 1)
+            if len(parts) == 2:
+                display_name = parts[1]
+                tags_part = parts[0].lstrip("[") # e.g., "SBM][book_list"
+                tags = tags_part.split("][")
+                
+                if len(tags) == 2:
+                    school = tags[0].upper()
+                    doc_type = tags[1].lower()
+                else:
+                    # Fallback if format is malformed, e.g. [SBM]_filename.pdf
+                    logger.warning(f"Filename '{filename}' looked like new format but had malformed tags. Defaulting.")
+                    return "general", "other", filename
+                
+                # logger.info(f"Parsed NEW format: {school}, {doc_type}, {display_name}")
 
         # --- If neither format matches, default ---
         else:
@@ -419,6 +427,7 @@ def _parse_standardized_filename(filename: str) -> tuple[str, str, str]:
         logger.error(f"CRITICAL: Failed to parse filename '{filename}': {e}", exc_info=True)
         return "general", "other", filename # Default on any parsing error
 # --- *** END FIX *** ---
+
 
 def get_file_metadata(filename: str) -> dict:
     """ Gets metadata from the standardized filename. """
