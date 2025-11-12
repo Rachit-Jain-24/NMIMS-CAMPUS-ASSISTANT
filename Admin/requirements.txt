@@ -1,23 +1,23 @@
-Flask
-gunicorn
-pypdf==4.2.0
-langchain
-langchain-community  # <-- Main package for loaders
-langchain-aws==1.0.0
-faiss-cpu
-boto3
-python-dotenv==1.0.1
-pandas               # For CSV and Excel loaders
-openpyxl             # For Excel loader
-docx2txt             # For Word document loader
-python-pptx          # For PowerPoint loader
-unstructured         # For PowerPoint loader
-libmagic             # Dependency for unstructured
-python-magic         # Dependency for unstructured
-flask-cors
 amazon-textract-caller
-flask-login
+boto3
+docx2txt
+faiss-cpu
+Flask
 flask-bcrypt
-requests
-psycopg2-binary
+flask-cors
+flask-login
 Flask-SQLAlchemy
+gunicorn
+langchain
+langchain-aws==1.0.0
+langchain-community
+libmagic
+openpyxl
+pandas
+psycopg2-binary
+pypdf==4.2.0
+python-dotenv==1.0.1
+python-magic
+python-pptx
+requests
+unstructured
