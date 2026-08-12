@@ -1,193 +1,646 @@
-# NMIMS Campus Assistant (RAG Chatbot)
+# NMIMS Campus Assistant — RAG Chatbot
 
-This project is a sophisticated, dual-application **Retrieval-Augmented Generation (RAG)** chatbot designed to serve as a campus assistant for NMIMS Hyderabad.
+An AI-powered **Retrieval-Augmented Generation (RAG)** campus assistant built for NMIMS Hyderabad.
 
-The system is architecturally split into two main components:
+The system uses a **federated vector store architecture**, maintaining separate knowledge bases for different schools such as SBM, SOL, STME, along with a general campus knowledge base. This helps provide more accurate and context-aware responses.
 
-1.  **Admin Application:** A password-protected Flask web interface that allows an administrator to upload, manage, and build the knowledge base. It also features an analytics dashboard to monitor user queries and bot performance.
-2.  **User Application:** A Flask-based API that serves the end-user chatbot. It handles user queries in multiple languages, transcribes audio, and intelligently routes questions to the correct, school-specific knowledge base to generate answers.
+---
 
-A key feature of this architecture is its **federated vector store** model. Instead of a single, monolithic knowledge base, the system maintains separate vector stores for each school (SBM, SOL, STME, etc.) and for "general" campus information. This allows for more precise, context-aware, and ambiguity-free answers.
+## Overview
 
-## Features
+The project consists of two applications:
 
-### User-Facing App (`User/`)
+* **Admin Application** — Manage documents, build knowledge bases, and monitor chatbot usage.
+* **User Application** — Chat with the AI assistant using text or voice, with support for multiple languages.
 
-  * **Multi-Language Support:** Automatically translates non-English queries to English for processing and translates the final answer back to the user's original language using `deep_translator`.
-  * **Voice-to-Text:** Provides an endpoint (`/api/transcribe`) that uses `openai-whisper` to transcribe audio inputs into text.
-  * **Intelligent Query Classification:** A multi-step process to understand user intent:
-    1.  **Conversational:** First checks for simple greetings, farewells, or appreciation using regex to provide fast, non-LLM answers.
-    2.  **Heuristic:** Uses regex rules to quickly identify explicit school names (e.g., "SBM", "STME") or general-intent keywords (e.g., "hostel", "holiday list").
-    3.  **LLM-Based:** If heuristics fail, it uses an LLM (Mistral) with a strict prompt to classify the query into a specific school context or mark it as `AMBIGUOUS`.
-  * **Federated Search:**
-      * Queries for a specific school (e.g., "STME syllabus") search *only* the `STME` and `general` vector stores.
-      * General queries (e.g., "hostel rules") search the `general` store and *all* school-specific stores (as the rule might be in a school's SRB).
-      * Ambiguous queries (e.g., "When are exams?") are not searched; the bot replies by asking for clarification (e.g., "Which school are you asking about?").
-  * **Feedback Mechanism:** A `/api/feedback` endpoint allows users to "up" or "down" vote a response. This feedback is logged in the database and displayed on the admin dashboard.
+### System Architecture
 
-### Admin Panel (`Admin/`)
+```text
+                         NMIMS Campus Assistant
+                                  |
+                    +-------------+-------------+
+                    |                           |
+              Admin Application          User Application
+                    |                           |
+            Document Management          User Queries
+                    |                           |
+              AWS S3 + Textract          Query Classification
+                    |                           |
+              Document Processing        Federated Retrieval
+                    |                           |
+              FAISS Vector Stores       School + General
+                    |                           |
+                    +-------------+-------------+
+                                  |
+                            AWS Bedrock
+                         Mistral + Titan
+                                  |
+                              Response
+```
 
-  * **Secure Admin Interface:** A Flask-based web app protected by a username and hashed password login (using `Flask-Login` and `Bcrypt`).
-  * **Knowledge Base Management:**
-      * **Incremental Upload ("Fast Path"):** An admin can upload a new file (PDF, CSV, DOCX, etc.) and tag it with a `school_context` and `doc_type`. This downloads *only* the relevant vector index from S3, adds the new document, and re-uploads the updated index.
-      * **Full Rebuild ("Slow Path"):** A single-click button (`/rebuild`) to download *all* source documents from S3, re-process everything from scratch, and rebuild *all* federated vector stores. This is used after deleting files to ensure they are removed from the index.
-      * **Delete & Clear:** Secure endpoints to delete a single source file (`/delete`) or wipe the *entire* knowledge base, including all S3 files (`/clear`).
-  * **Robust Document Processing:**
-      * **PDFs:** Uses **AWS Textract** as the primary method for high-accuracy OCR. It includes a fallback to `PyPDF` if Textract fails.
-      * **Excel/CSV:** Uses `pandas` to convert each row into a separate document, ideal for structured data like library book lists.
-  * **Live Analytics Dashboard (`/dashboard`):**
-      * Connects to the shared SQL database to provide a real-time view of chatbot usage.
-      * **KPIs:** Displays total queries, failure rate (ambiguous or no-doc answers), and good feedback rate.
-      * **Query Tables:** Shows "Top Queries" (most frequently asked) and "Failed Queries" (recent ambiguous/no-doc/disliked) to identify knowledge gaps.
-      * **Charts:** Visualizes "Queries by School" and "Query Status" (Successful, Disliked, Ambiguous).
-  * **Live Reload Trigger:** After the Admin app uploads a new index to S3, it sends a secure, authorized POST request to the User app's `/api/refresh-knowledge-base` endpoint. This tells the User app to immediately dump its old in-memory index and reload the new one from S3, ensuring the chatbot is updated in real-time without a restart.
+---
 
-## Architecture & Data Flow
+# Screenshots
 
-1.  **Admin:** An admin logs into the `Admin` app (`http://localhost:5000`) and uploads `STME_Academic_Calendar.pdf`, tagging it for the `STME` school.
-2.  **`Admin/backend_processor.py`:** The backend processes the PDF using AWS Textract, splits it into chunks, embeds them using Amazon Titan, downloads the existing `STME` FAISS index from S3, adds the new chunks, and uploads the updated index back to S3.
-3.  **Live Reload:** The Admin app pings the `User` app's `/api/refresh-knowledge-base` endpoint.
-4.  **`User/rag_backend.py`:** The User app receives the signal and re-downloads the `STME` index from S3 into its in-memory FAISS store.
-5.  **User:** A user sends a query (e.g., "When are the STME exams?") to the `User` app's `/api/chat` endpoint (`http://localhost:8086`).
-6.  **`User/rag_backend.py`:**
-      * The query is classified (heuristically or via LLM) as belonging to `STME`.
-      * A similarity search is performed *only* on the `STME` and `general` vector stores.
-      * The relevant chunks from `STME_Academic_Calendar.pdf` are retrieved.
-      * The chunks, query, and chat history are passed to the Mistral LLM to generate a natural language answer.
-7.  **`User/app.py`:**
-      * The English query, the English answer, and the classified context (`STME`) are logged to the SQL database.
-      * The final answer is sent back to the user.
-8.  **Admin:** The admin can now visit the `/dashboard` on their app and see the new "STME" query reflected in the analytics.
+## User Application
 
-## Technology Stack
+### Chat Interface
 
-  * **Backend:** Flask, Flask-Login, Flask-SQLAlchemy, Flask-Bcrypt
-  * **AI & LLM Orchestration:** LangChain
-  * **LLM:** AWS Bedrock (e.g., `mistral.mixtral-8x7b-instruct-v0:1`)
-  * **Embeddings:** AWS Bedrock (e.g., `amazon.titan-embed-text-v2:0`)
-  * **Vector Store:** FAISS (CPU)
-  * **Cloud & Storage:** AWS S3 (for source documents and FAISS indexes)
-  * **Document Processing:** AWS Textract (primary PDF OCR), `pypdf` (fallback), `pandas` (Excel/CSV), `docx2txt` (Word), `unstructured` (PowerPoint)
-  * **Database:** PostgreSQL (inferred from `psycopg2-binary`)
-  * **User Features:** `openai-whisper` (Audio Transcription), `deep_translator` (Multi-language)
+<p align="center">
+  <img src="screenshots/user_chat_interface.png" width="90%">
+</p>
 
-## Setup and Installation
+The chatbot provides a conversational interface for asking questions about academics, hostels, policies, events, placements, and other campus information.
 
-### Prerequisites
+---
 
-  * Python (3.9+ recommended)
-  * An AWS Account with permissions for:
-      * **S3** (to create/read/write to a bucket)
-      * **Bedrock** (to access Titan embedding and Mistral LLM models)
-      * **Textract** (for PDF processing)
-  * A PostgreSQL Database
+### Conversational Flow
 
-### 1\. Clone the Repository
+<p align="center">
+  <img src="screenshots/user_conversational_flow.png" width="90%">
+</p>
+
+The system handles different types of user interactions and determines the appropriate processing path before generating a response.
+
+---
+
+### Query Classification
+
+<p align="center">
+  <img src="screenshots/query_classification.png" width="90%">
+</p>
+
+The chatbot classifies queries before retrieval to determine the appropriate school-specific knowledge base.
+
+For example:
+
+```text
+"STME syllabus"
+       ↓
+Query Classification
+       ↓
+STME Context
+       ↓
+STME + General Vector Stores
+       ↓
+Relevant Documents
+       ↓
+LLM Response
+```
+
+---
+
+## Admin Application
+
+### Admin Dashboard
+
+<p align="center">
+  <img src="screenshots/adminportal_enhanced.png" width="90%">
+</p>
+
+The admin application provides a secure interface for managing the knowledge base and monitoring chatbot activity.
+
+---
+
+### Knowledge Base Management
+
+<p align="center">
+  <img src="screenshots/knowledgebase_interface.png" width="90%">
+</p>
+
+Administrators can upload and manage documents that are used by the RAG pipeline.
+
+Documents can be associated with:
+
+* Specific schools
+* General campus information
+* Different document types
+
+---
+
+# Key Features
+
+## 1. Federated RAG Architecture
+
+Instead of using a single large vector database, the system maintains separate FAISS indexes for different school contexts.
+
+```text
+S3
+│
+├── general/
+│   └── general.faiss
+│
+├── SBM/
+│   └── sbm.faiss
+│
+├── SOL/
+│   └── sol.faiss
+│
+└── STME/
+    └── stme.faiss
+```
+
+This allows the system to retrieve information from the most relevant knowledge bases.
+
+### Example
+
+For:
+
+```text
+"STME syllabus"
+```
+
+the system searches:
+
+```text
+STME + General
+```
+
+rather than searching every available document.
+
+---
+
+## 2. Intelligent Query Classification
+
+The system uses a multi-step classification process.
+
+### Conversational Detection
+
+Simple interactions such as:
+
+```text
+Hello
+Thank you
+Goodbye
+```
+
+are handled directly without unnecessary LLM calls.
+
+### Heuristic Classification
+
+Explicit school names and common keywords are detected using rules.
+
+Example:
+
+```text
+"STME syllabus"
+        ↓
+STME
+```
+
+### LLM Classification
+
+If the query cannot be confidently classified using heuristics, an LLM is used to determine the appropriate context.
+
+For ambiguous queries such as:
+
+```text
+"When are the exams?"
+```
+
+the system can request clarification rather than retrieving information from the wrong school.
+
+---
+
+# 3. Federated Search
+
+The retrieval strategy depends on the classified context.
+
+| Query Type      | Vector Stores             |
+| --------------- | ------------------------- |
+| School-specific | Relevant School + General |
+| General         | General + School Stores   |
+| Ambiguous       | No Retrieval              |
+
+This helps reduce irrelevant context and improve retrieval precision.
+
+---
+
+# 4. Document Processing Pipeline
+
+```text
+Document Upload
+      ↓
+File Type Detection
+      ↓
+Document Extraction
+      ↓
+Text Chunking
+      ↓
+Amazon Titan Embeddings
+      ↓
+FAISS Index
+      ↓
+AWS S3
+```
+
+### Supported Processing
+
+* **PDF** → AWS Textract with PyPDF fallback
+* **CSV / Excel** → Pandas
+* **DOCX** → docx2txt
+* **PowerPoint** → Unstructured
+
+---
+
+# 5. Live Knowledge Base Reload
+
+The chatbot can update its knowledge base without requiring a restart.
+
+```text
+Admin uploads document
+        ↓
+Document processed
+        ↓
+FAISS index updated
+        ↓
+Index uploaded to S3
+        ↓
+Refresh API triggered
+        ↓
+User application reloads index
+        ↓
+New knowledge becomes available
+```
+
+This allows administrators to update campus information while the chatbot remains running.
+
+---
+
+# 6. Feedback System
+
+Users can provide feedback on generated responses.
+
+```text
+User Response
+     ↓
+👍 / 👎
+     ↓
+PostgreSQL
+     ↓
+Admin Dashboard
+```
+
+Feedback can be used to identify poor responses and knowledge gaps.
+
+---
+
+# Architecture & Data Flow
+
+```text
+                         USER
+                           |
+                           ↓
+                    /api/chat
+                           |
+                           ↓
+                 Query Classification
+                           |
+             +-------------+-------------+
+             |             |             |
+       Conversational   Heuristic       LLM
+             |             |             |
+             +-------------+-------------+
+                           |
+                           ↓
+                  School Context
+                           |
+                           ↓
+                 Federated Retrieval
+                           |
+             +-------------+-------------+
+             |             |             |
+           SBM           STME          General
+             |             |             |
+             +-------------+-------------+
+                           |
+                           ↓
+                    FAISS Search
+                           |
+                           ↓
+                   Relevant Chunks
+                           |
+                           ↓
+                     AWS Bedrock
+                        Mistral
+                           |
+                           ↓
+                     Final Answer
+                           |
+                           ↓
+                     PostgreSQL
+                           |
+                           ↓
+                   Admin Analytics
+```
+
+---
+
+# Admin Data Pipeline
+
+```text
+Admin Upload
+     ↓
+AWS S3
+     ↓
+Document Processing
+     ↓
+AWS Textract / Pandas / PyPDF
+     ↓
+Text Chunking
+     ↓
+Amazon Titan Embeddings
+     ↓
+FAISS
+     ↓
+AWS S3
+     ↓
+Live Reload
+     ↓
+User Application
+```
+
+---
+
+# Technology Stack
+
+### Backend
+
+* Python
+* Flask
+* Flask-SQLAlchemy
+* Flask-Login
+* Flask-Bcrypt
+
+### AI & RAG
+
+* LangChain
+* AWS Bedrock
+* Mistral / Mixtral
+* Amazon Titan Embeddings
+* FAISS
+
+### Cloud
+
+* AWS S3
+* AWS Textract
+* AWS Bedrock
+
+### Database
+
+* PostgreSQL
+
+### Document Processing
+
+* PyPDF
+* Pandas
+* docx2txt
+* Unstructured
+
+### User Features
+
+* OpenAI Whisper
+* Deep Translator
+
+---
+
+# Project Structure
+
+```text
+NMIMS-CAMPUS-ASSISTANT/
+│
+├── Admin/
+│   ├── app.py
+│   ├── backend_processor.py
+│   ├── models.py
+│   └── ...
+│
+├── User/
+│   ├── app.py
+│   ├── rag_backend.py
+│   └── ...
+│
+├── screenshots/
+│   ├── adminportal_enhanced.png
+│   ├── knowledgebase_interface.png
+│   ├── query_classification.png
+│   ├── user_chat_interface.png
+│   └── user_conversational_flow.png
+│
+├── .gitignore
+├── README.md
+├── requirements.txt
+├── run_create_db.py
+├── startadmin.ps1
+├── startadmin.sh
+├── startuser.ps1
+└── startuser.sh
+```
+
+---
+
+# Setup & Installation
+
+## Prerequisites
+
+* Python 3.9+
+* AWS Account
+* Amazon S3 access
+* Amazon Bedrock access
+* AWS Textract access
+* PostgreSQL database
+
+---
+
+## 1. Clone the Repository
 
 ```bash
 git clone <repository-url>
 cd NMIMS-CAMPUS-ASSISTANT
 ```
 
-### 2\. Set Up Virtual Environments
+---
 
-It is highly recommended to use separate virtual environments for the two apps, as they have different dependencies.
+## 2. Create Virtual Environments
+
+The Admin and User applications use separate environments.
+
+### Admin
 
 ```bash
-# Set up Admin venv
 python -m venv venv_admin
-source venv_admin/bin/activate
-pip install -r Admin/requirements.txt
+```
 
-# Set up User venv in a separate terminal
+Windows:
+
+```bash
+venv_admin\Scripts\activate
+```
+
+Linux / macOS:
+
+```bash
+source venv_admin/bin/activate
+```
+
+```bash
+pip install -r Admin/requirements.txt
+```
+
+### User
+
+```bash
 python -m venv venv_user
+```
+
+Windows:
+
+```bash
+venv_user\Scripts\activate
+```
+
+Linux / macOS:
+
+```bash
 source venv_user/bin/activate
+```
+
+```bash
 pip install -r User/requirements.txt
 ```
 
-### 3\. Configure Environment Variables
+---
 
-Create a `.env` file in the *root* directory. Both applications will load this file.
+# 3. Environment Variables
 
-```ini
-# --- Database ---
-# (Must be accessible by both apps)
+Create a `.env` file in the project root.
+
+```env
 DATABASE_URL="postgresql://YOUR_DB_USER:YOUR_DB_PASSWORD@YOUR_DB_HOST:5432/YOUR_DB_NAME"
 
-# --- Flask ---
-# (Must be THE SAME for both apps for the refresh-key to work)
 FLASK_SECRET_KEY="your_very_strong_random_secret_key"
 
-# --- AWS Credentials ---
 AWS_ACCESS_KEY_ID="your_aws_access_key"
 AWS_SECRET_ACCESS_KEY="your_aws_secret_key"
-AWS_DEFAULT_REGION="your_aws_region" # e.g., ap-south-1
+AWS_DEFAULT_REGION="your_aws_region"
 
-# --- S3 Bucket ---
-BUCKET_NAME="your-s3-bucket-name-for-docs-and-indexes"
+BUCKET_NAME="your-s3-bucket-name"
 
-# --- Bedrock Models ---
-# (These are the defaults, change if needed)
 BEDROCK_EMBEDDING_MODEL_ID="amazon.titan-embed-text-v2:0"
 BEDROCK_LLM_MODEL_ID="mistral.mixtral-8x7b-instruct-v0:1"
 
-# --- Admin Login ---
 ADMIN_USERNAME="admin"
-# Generate a bcrypt hash of your desired password and paste it here
 ADMIN_HASHED_PASSWORD="your_bcrypt_hashed_password"
 ```
 
-### 4\. Initialize the Database
+**Do not commit real AWS credentials, passwords, API keys, or secrets to GitHub.**
 
-Before running the apps, you need to create the database tables defined in `models.py`. You can do this with a simple Python script.
+Add the following to `.gitignore`:
 
-*(In one of your activated virtual environments, e.g., `venv_admin`):*
-
-```python
-# run_create_db.py
-from dotenv import load_dotenv
-load_dotenv() # Load the .env file
-
-from Admin.app import app, db
-# Or from User.app import app, db
-# They share the same models
-
-with app.app_context():
-    print("Creating database tables...")
-    db.create_all()
-    print("Done.")
+```gitignore
+.env
+venv_admin/
+venv_user/
+__pycache__/
+*.pyc
 ```
 
-Now run this script:
+---
+
+# 4. Initialize Database
+
+Create the required PostgreSQL tables:
+
+```python
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from Admin.app import app, db
+
+with app.app_context():
+    db.create_all()
+    print("Database initialized.")
+```
+
+Run:
 
 ```bash
 python run_create_db.py
 ```
 
-## Running the Application
+---
 
-You must run both applications simultaneously in separate terminals.
+# Running the Application
 
-### Terminal 1: Run the User App
+Both applications need to run simultaneously.
+
+### User Application
+
+Windows:
+
+```powershell
+./startuser.ps1
+```
+
+Linux / macOS:
 
 ```bash
-# For Windows PowerShell
-./startuser.ps1
-
-# For Linux/MacOS Terminal
 ./startuser.sh
 ```
 
-*(The User App will be live at `http://localhost:8086`)*
+User application:
 
-### Terminal 2: Run the Admin App
+```text
+http://localhost:8086
+```
+
+### Admin Application
+
+Windows:
+
+```powershell
+./startadmin.ps1
+```
+
+Linux / macOS:
 
 ```bash
-# For Windows PowerShell
-./startadmin.ps1
-
-# For Linux/MacOS Terminal
 ./startadmin.sh
 ```
 
-*(The Admin App will be live at `http://localhost:5000`)*
+Admin application:
+
+```text
+http://localhost:5000
+```
+
+---
+
+# Research
+
+This project explores **Federated Retrieval-Augmented Generation for university knowledge systems**.
+
+The architecture focuses on improving retrieval precision by routing queries to domain-specific knowledge bases instead of searching a single monolithic vector store.
+
+---
+
+# Future Improvements
+
+* Improved RAG evaluation and benchmarking
+* Advanced retrieval and reranking
+* Conversation-aware retrieval
+* Automated document ingestion
+* Containerized deployment
+* Improved monitoring and observability
+* Scalable cloud deployment
+
+---
+
+# Author
+
+**Rachit Jain**
+
+B.Tech Computer Science & Engineering — Data Science
+
+Interested in **AI/ML Engineering, Generative AI, RAG, Agentic AI, and Data Science**.
